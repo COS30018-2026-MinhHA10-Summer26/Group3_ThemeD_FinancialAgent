@@ -1,13 +1,30 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import auth
-from database import Base, engine
+from routers import auth, people
+from database import Base, engine, SessionLocal
+from models import Role
 
 app = FastAPI()
 
 Base.metadata.create_all(bind=engine)
 
 app.include_router(auth.router)
+app.include_router(people.router)
+
+
+def seed_default_roles() -> None:
+    db = SessionLocal()
+    try:
+        for role_name in ("User", "Admin"):
+            existing_role = db.query(Role).filter(Role.role_name == role_name).first()
+            if not existing_role:
+                db.add(Role(role_name=role_name))
+        db.commit()
+    finally:
+        db.close()
+
+
+seed_default_roles()
 
 app.add_middleware(
     CORSMiddleware,
