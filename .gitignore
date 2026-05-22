@@ -76,3 +76,11 @@ docker-compose.override.yml
 # Misc
 *~
 *.swp
+
+# Node dependencies
+node_modules/
+# optional: ignore frontend node_modules as well
+frontend/node_modules/
+
+# Ensure the local `lib/` folder is tracked (do not ignore)
+!lib/
