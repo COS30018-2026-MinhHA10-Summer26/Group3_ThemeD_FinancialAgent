@@ -2,7 +2,7 @@
 
 /* eslint-disable react-hooks/set-state-in-effect */
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { createApiClient, getApiErrorMessage } from "@/lib/api";
@@ -50,9 +50,11 @@ export default function PeoplePage() {
   const [error, setError] = useState<string | null>(null);
   const [newEmail, setNewEmail] = useState("");
   const [newRoleId, setNewRoleId] = useState<string>("");
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editEmail, setEditEmail] = useState("");
   const [editRoleId, setEditRoleId] = useState<string>("");
+  const createUserLockRef = useRef(false);
 
   useEffect(() => {
     if (status === "loading") {
@@ -166,11 +168,14 @@ export default function PeoplePage() {
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!isAdmin) return;
+    if (createUserLockRef.current) return;
 
     const token = localStorage.getItem("access_token") ?? (session as { backendToken?: string } | null)?.backendToken ?? "";
     if (!token) return;
 
     const selectedRoleId = newRoleId || roles[0]?.role_id;
+    createUserLockRef.current = true;
+    setIsCreatingUser(true);
 
     try {
       const api = createApiClient(token);
@@ -183,6 +188,9 @@ export default function PeoplePage() {
       resetCreateForm();
     } catch (createError) {
       setError(getApiErrorMessage(createError, "Failed to create user"));
+    } finally {
+      createUserLockRef.current = false;
+      setIsCreatingUser(false);
     }
   }
 
@@ -284,9 +292,9 @@ export default function PeoplePage() {
             <button
               type="submit"
               className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
-              disabled={roles.length === 0}
+              disabled={roles.length === 0 || isCreatingUser}
             >
-              Add user
+              {isCreatingUser ? "Adding..." : "Add user"}
             </button>
           </form>
         </div>

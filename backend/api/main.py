@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import auth, people
+from routers import auth, people, projects
 from database import Base, engine, SessionLocal
 from models import Role
 
@@ -10,6 +10,7 @@ Base.metadata.create_all(bind=engine)
 
 app.include_router(auth.router)
 app.include_router(people.router)
+app.include_router(projects.router)
 
 
 def seed_default_roles() -> None:

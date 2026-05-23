@@ -7,7 +7,8 @@ from sqlalchemy import (
     Table,
     TIMESTAMP,
     func,
-    JSON
+    JSON,
+    text
 )
 
 from sqlalchemy.orm import relationship
@@ -17,6 +18,9 @@ from pgvector.sqlalchemy import Vector
 import uuid
 
 from database import Base
+
+DEFAULT_EMBEDDING_MODEL = "OpenAIEmbedding"
+DEFAULT_LLM_MODEL = "OpenAI"
 
 
 # =========================
@@ -41,7 +45,7 @@ project_members = Table(
         primary_key=True
     ),
 
-    Column("permission", String(50), nullable=False),
+    Column("permission", String(50), nullable=False, server_default=text("'member'")),
 
     Column(
         "join_at",
@@ -139,9 +143,9 @@ class Project(Base):
 
     description = Column(Text)
 
-    embedding_model = Column(String(100))
+    embedding_model = Column(String(100), nullable=False, default=DEFAULT_EMBEDDING_MODEL)
 
-    llm_model = Column(String(100))
+    llm_model = Column(String(100), nullable=False, default=DEFAULT_LLM_MODEL)
 
     created_at = Column(
         TIMESTAMP(timezone=True),
