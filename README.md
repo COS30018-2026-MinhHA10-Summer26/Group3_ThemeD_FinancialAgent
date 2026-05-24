@@ -37,7 +37,7 @@ User Query
 → Retrieve contextual documents
 → Analyze information
 → Generate report
-
+```
 
 ## Run locally
 
