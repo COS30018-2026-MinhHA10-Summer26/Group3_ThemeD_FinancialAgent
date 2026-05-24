@@ -5,8 +5,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
-from deps import bcrypt_context, db_dependency, get_current_user
-from models import Role, User
+from api.deps import bcrypt_context, db_dependency, get_current_user
+from api.models import Role, User
 
 router = APIRouter(prefix="/people", tags=["people"])
 

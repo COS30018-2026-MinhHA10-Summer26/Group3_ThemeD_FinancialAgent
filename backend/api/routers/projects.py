@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import selectinload
 
-from deps import db_dependency, get_current_user
-from models import DEFAULT_EMBEDDING_MODEL, DEFAULT_LLM_MODEL, Conversation, Project, User, project_members
+from api.deps import db_dependency, get_current_user
+from api.models import DEFAULT_EMBEDDING_MODEL, DEFAULT_LLM_MODEL, Conversation, Project, User, project_members
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
