@@ -1,0 +1,25 @@
+# AI Integration Module Dependencies
+
+# Core
+python-dotenv==1.0.0
+PyYAML==6.0
+
+# Web & Scraping
+requests==2.31.0
+beautifulsoup4==4.12.2
+google-search-results==2.4.2
+
+# LLM & NLP
+transformers==4.35.2
+sentence-transformers==2.2.2
+torch==2.1.1
+
+# Vector Search & ML
+faiss-cpu==1.7.4
+numpy==1.24.3
+
+# PDF Processing
+pypdf==4.0.1
+
+# Type Hints
+typing-extensions==4.8.0
