@@ -1,56 +1,32 @@
-"""
-In-memory retrieval and reranking helpers for the financial agent.
-"""
-
-from __future__ import annotations
-
-from typing import Any
-
-from ai_integration.rag.embedding import cosine_like_similarity, embed_text
+from ai_integration.rag.vector_store import VectorStore
+from ai_integration.rag.embedding_model import EmbeddingModel
+import yaml
+import time
+# import mlflow
 
 
-def score_document(query: str, document: dict[str, Any]) -> float:
-    """Compute a similarity score between the query and document content."""
+class Retriever:
+    def __init__(self, config): 
+        self.config = config
+        self.model = EmbeddingModel(self.config["embedding_model"])
+        self.vector_store = VectorStore.load("data/processed")
+        self.top_k = self.config["top_k"]
+        retrieval_config = self.config.get("retrieval", {})
+        self.vector_weight = retrieval_config.get("vector_weight", self.config.get("vector_weight", 0.6))
+        self.bm25_weight = retrieval_config.get("bm25_weight", self.config.get("bm25_weight", 0.4))
 
-    query_embedding = embed_text(query)
-    document_text = " ".join(
-        str(part)
-        for part in (
-            document.get("title", ""),
-            document.get("content", ""),
-            document.get("summary", ""),
+    def preprocess_query(self, query):
+        return query.strip().lower()
+    def retrieve(self, query):
+        start = time.time()
+        query_emb = self.model.embed_query(query)
+        results = self.vector_store.search(
+            query_embedding=query_emb,
+            query_text=query,
+            top_k=self.top_k,
+            vector_weight=self.vector_weight,
+            bm25_weight=self.bm25_weight,
         )
-        if part
-    )
-    document_embedding = embed_text(document_text)
-    return cosine_like_similarity(query_embedding, document_embedding)
-
-
-def retrieve_documents(
-    query: str,
-    documents: list[dict[str, Any]],
-    top_k: int = 5,
-) -> tuple[list[dict[str, Any]], float]:
-    """Retrieve top-k documents from an in-memory corpus."""
-
-    scored_documents: list[dict[str, Any]] = []
-    for document in documents:
-        enriched = dict(document)
-        enriched["score"] = score_document(query, document)
-        scored_documents.append(enriched)
-
-    ranked = sorted(scored_documents, key=lambda item: item.get("score", 0.0), reverse=True)
-    top_documents = ranked[: max(top_k, 1)]
-    top_score = float(top_documents[0]["score"]) if top_documents else 0.0
-    return top_documents, top_score
-
-
-def rerank_documents(
-    query: str,
-    documents: list[dict[str, Any]],
-    top_k: int = 5,
-) -> list[dict[str, Any]]:
-    """Rerank documents using the same fallback scoring function."""
-
-    reranked, _ = retrieve_documents(query, documents, top_k=top_k)
-    return reranked
+        latency = time.time() - start
+        # mlflow.log_metric("latency", latency)
+        return results, latency

@@ -80,20 +80,19 @@ class FinancialLLM:
             "Summary: The answer above is synthesized from the highest ranked retrieved context."
         )
         return "\n".join(lines)
-    def invoke(self,prompt: str,query:str) -> str:
-        prompt = build_prompt(query,CONTEXT,prompt)
+    def invoke(self,query:str) -> str:
+        prompt = build_prompt(query,CONTEXT)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(
             device=self.model.device
         )
-        outputs = self.model.generate(**inputs, max_new_tokens=300)
+        outputs = self.model.generate(**inputs, max_new_tokens=500)
         generated_tokens = outputs[0][inputs["input_ids"].shape[1]:]
         return self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
 
 
 def get_llm() -> FinancialLLM:
     """Return the default LLM interface for the orchestrator."""
-
     return FinancialLLM()
 
-def build_prompt(query,context,prompt):
-    return f"Context: {context}\n\n Task: {prompt}\n\nQuery: {query}\n\nAnswer:"
+def build_prompt(query,context):
+    return f"Context: {context}\n\nQuery: {query}\n\nAnswer:"
