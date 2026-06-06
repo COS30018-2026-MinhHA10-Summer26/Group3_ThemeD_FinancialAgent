@@ -9,8 +9,7 @@ h11==0.14.0
 idna==3.7
 passlib==1.7.4
 pyasn1==0.6.0
-pydantic==2.7.0
-pydantic_core==2.18.1
+pydantic==2.8.2
 python-jose==3.3.0
 python-multipart==0.0.9
 rsa==4.9
@@ -23,3 +22,11 @@ uvicorn==0.29.0
 python-dotenv
 pgvector 
 psycopg2-binary
+langchain-openai
+unstructured
+unstructured-client
+unstructured-inference
+unstructured.pytesseract
+langchain-community
+pi-heif
+pdf2image

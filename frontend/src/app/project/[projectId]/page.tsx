@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { createApiClient, getApiErrorMessage } from "@/lib/api";
@@ -8,6 +8,7 @@ import { ProjectConversationsCard } from "@/components/project-detail/project-co
 import { ProjectDetailsCard } from "@/components/project-detail/project-details-card";
 import { ProjectMembersCard } from "@/components/project-detail/project-members-card";
 import { ProjectPageHeader } from "@/components/project-detail/project-page-header";
+import type { DocumentRow } from "@/components/project-detail/types";
 import type {
   ConversationPayload,
   ConversationRow,
@@ -44,9 +45,11 @@ export default function ProjectDetailPage() {
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
+  const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [creatingConversation, setCreatingConversation] = useState(false);
+  const [uploadingDocument, setUploadingDocument] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -54,7 +57,9 @@ export default function ProjectDetailPage() {
   const [llmModel, setLlmModel] = useState(LLM_MODEL_OPTIONS[0].value);
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [rightPanelHeight, setRightPanelHeight] = useState<number | null>(null);
+  const [selectedDocumentFile, setSelectedDocumentFile] = useState<File | null>(null);
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
+  const documentFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (status === "loading") {
@@ -105,9 +110,10 @@ export default function ProjectDetailPage() {
 
       try {
         const api = createApiClient(authToken);
-        const [projectResponse, conversationsResponse, usersResponse] = await Promise.all([
+        const [projectResponse, conversationsResponse, documentsResponse, usersResponse] = await Promise.all([
           api.get<ProjectRow>(`/projects/${projectId}`),
           api.get<ConversationRow[]>(`/projects/${projectId}/conversations`),
+          api.get<DocumentRow[]>(`/documents?project_id=${projectId}`),
           currentRole === "Admin" ? api.get<UserRow[]>("/people/users") : Promise.resolve({ data: [] as UserRow[] }),
         ]);
 
@@ -120,6 +126,7 @@ export default function ProjectDetailPage() {
         setLlmModel(projectResponse.data.llm_model || LLM_MODEL_OPTIONS[0].value);
         setMemberIds(projectResponse.data.member_ids ?? []);
         setConversations(conversationsResponse.data);
+        setDocuments(documentsResponse.data);
         setUsers(usersResponse.data);
       } catch (loadError) {
         if (cancelled) return;
@@ -250,6 +257,47 @@ export default function ProjectDetailPage() {
     }
   }
 
+  async function handleUploadDocument(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!projectId || !isAdmin || uploadingDocument) return;
+
+    const token = localStorage.getItem("access_token") ?? (session as { backendToken?: string } | null)?.backendToken ?? "";
+    if (!token) return;
+
+    if (!selectedDocumentFile) {
+      setError("Please choose a PDF file to upload.");
+      return;
+    }
+
+    setUploadingDocument(true);
+    setError(null);
+
+    try {
+      const api = createApiClient(token);
+      const formData = new FormData();
+      formData.append("project_id", projectId);
+      formData.append("file", selectedDocumentFile);
+
+      await api.post<DocumentRow>("/documents", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      });
+
+      setSelectedDocumentFile(null);
+      if (documentFileInputRef.current) {
+        documentFileInputRef.current.value = "";
+      }
+
+      const documentsResponse = await api.get<DocumentRow[]>(`/documents?project_id=${projectId}`);
+      setDocuments(documentsResponse.data);
+    } catch (uploadError) {
+      setError(getApiErrorMessage(uploadError, "Failed to upload document"));
+    } finally {
+      setUploadingDocument(false);
+    }
+  }
+
   return (
     <section className="mx-auto max-w-7xl px-6 py-10 sm:px-10 lg:px-12">
       <ProjectPageHeader
@@ -306,6 +354,78 @@ export default function ProjectDetailPage() {
           router.push(`/project/${projectId}/chat/${conversationId}`);
         }}
       />
+
+      <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">Documents</p>
+            <h3 className="mt-2 text-xl font-semibold">Project documents</h3>
+            <p className="mt-1 text-sm text-slate-500">Each document here belongs only to this project.</p>
+          </div>
+          <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">
+            {documents.length} document{documents.length === 1 ? "" : "s"}
+          </div>
+        </div>
+
+        {isAdmin ? (
+          <form onSubmit={handleUploadDocument} className="mt-5 grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 lg:grid-cols-[1.5fr_auto] lg:items-end">
+            <label className="flex flex-col gap-2 text-sm font-medium text-slate-700">
+              Upload PDF
+              <input
+                ref={documentFileInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={(event) => setSelectedDocumentFile(event.target.files?.[0] ?? null)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none file:mr-4 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
+              />
+              <span className="text-xs text-slate-500">
+                {selectedDocumentFile ? selectedDocumentFile.name : "Select a PDF to ingest into this project."}
+              </span>
+            </label>
+
+            <button
+              type="submit"
+              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+              disabled={uploadingDocument}
+            >
+              {uploadingDocument ? "Uploading..." : "Upload document"}
+            </button>
+          </form>
+        ) : null}
+
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {documents.length > 0 ? (
+            documents.map((document) => (
+              <article key={document.document_id} className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h4 className="text-lg font-semibold tracking-tight text-slate-900">{document.file_name}</h4>
+                    <p className="mt-1 text-sm text-slate-600">Uploaded by {document.uploader_email || "Unknown"}</p>
+                  </div>
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">
+                    PDF
+                  </span>
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-600">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Pages</div>
+                    <div className="mt-1 font-medium text-slate-900">{document.total_page}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Chunks</div>
+                    <div className="mt-1 font-medium text-slate-900">{document.total_chunk}</div>
+                  </div>
+                </div>
+              </article>
+            ))
+          ) : (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-500 md:col-span-2 xl:col-span-3">
+              No documents uploaded for this project yet.
+            </div>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

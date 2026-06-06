@@ -103,18 +103,15 @@ export default function ProjectPage() {
 
     async function loadProjects() {
       setLoading(true);
-      setError(null);
 
       try {
         const api = createApiClient(authToken);
-        const response = await api.get<ProjectRow[]>("/projects");
+        const projectsResult = await api.get<ProjectRow[]>("/projects");
 
         if (cancelled) return;
 
-        setProjects(response.data);
-      } catch (loadError) {
-        if (cancelled) return;
-        setError(getApiErrorMessage(loadError, "Failed to load projects"));
+        setProjects(projectsResult.data);
+        setError(null);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -176,6 +173,7 @@ export default function ProjectPage() {
       setIsCreatingProject(false);
     }
   }
+
 
   return (
     <section className="mx-auto max-w-7xl px-6 py-10 sm:px-10 lg:px-12">

@@ -1,4 +1,7 @@
+import base64
+import json
 import re
+from html import escape
 from io import BytesIO
 
 from pypdf import PdfReader
@@ -74,7 +77,67 @@ def _table_title(block, fallback_heading=None):
     return fallback_heading or "Table"
 
 
-def _make_section(text, source, page, section_title=None, section_type="body"):
+def _extract_page_images(page):
+    images = []
+    for image in getattr(page, "images", []) or []:
+        image_data = getattr(image, "data", None) or getattr(image, "image", None)
+        if hasattr(image_data, "getvalue"):
+            image_data = image_data.getvalue()
+
+        if isinstance(image_data, bytes) and image_data:
+            images.append(base64.b64encode(image_data).decode("utf-8"))
+
+    return images
+
+
+def _block_to_table_html(block):
+    rows = []
+    for line in block.splitlines():
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+
+        cells = [cell.strip() for cell in re.split(r"\s{2,}|\t+", cleaned) if cell.strip()]
+        if not cells:
+            cells = [cleaned]
+
+        rows.append(cells)
+
+    if not rows:
+        return ""
+
+    max_columns = max(len(row) for row in rows)
+    html_rows = []
+
+    for row_index, row in enumerate(rows):
+        tag = "th" if row_index == 0 and len(rows) > 1 else "td"
+        cells = row + [""] * (max_columns - len(row))
+        html_rows.append(
+            "<tr>"
+            + "".join(f"<{tag}>{escape(cell)}</{tag}>" for cell in cells)
+            + "</tr>"
+        )
+
+    return "<table>" + "".join(html_rows) + "</table>"
+
+
+def _build_original_content(text, tables_html=None, images_base64=None):
+    return {
+        "raw_text": text,
+        "tables_html": tables_html or [],
+        "images_base64": images_base64 or [],
+    }
+
+
+def _make_section(
+    text,
+    source,
+    page,
+    section_title=None,
+    section_type="body",
+    tables_html=None,
+    images_base64=None,
+):
     paragraphs = []
     for block in re.split(r"\n\s*\n", text):
         lines = [re.sub(r"\s+", " ", line).strip() for line in block.splitlines()]
@@ -86,12 +149,25 @@ def _make_section(text, source, page, section_title=None, section_type="body"):
     if not normalized:
         return None
 
+    original_content = _build_original_content(
+        normalized,
+        tables_html=tables_html,
+        images_base64=images_base64,
+    )
+
     return {
         "text": normalized,
         "source": source,
         "page": page,
         "section_title": section_title,
         "section_type": section_type,
+        "metadata": {
+            "source": source,
+            "page": page,
+            "section_title": section_title,
+            "section_type": section_type,
+            "original_content": original_content,
+        },
     }
 
 
@@ -101,10 +177,11 @@ def extract_sections_from_pdf(pdf_bytes, source):
     current_heading = None
     current_type = "body"
     buffered_paragraphs = []
+    buffered_images = []
     buffer_page = 0
 
     def flush_buffer():
-        nonlocal buffered_paragraphs, buffer_page
+        nonlocal buffered_paragraphs, buffered_images, buffer_page
 
         if not buffered_paragraphs:
             return
@@ -116,15 +193,19 @@ def extract_sections_from_pdf(pdf_bytes, source):
             page=buffer_page,
             section_title=current_heading,
             section_type=current_type,
+            images_base64=list(dict.fromkeys(buffered_images)),
         )
         if section:
             sections.append(section)
         buffered_paragraphs = []
+        buffered_images = []
 
     for page_number, page in enumerate(reader.pages):
         page_text = _extract_page_text(page)
         if not page_text.strip():
             continue
+
+        page_images = _extract_page_images(page)
 
         blocks = [_normalize_block(block) for block in re.split(r"\n\s*\n", page_text)]
         blocks = [block for block in blocks if block]
@@ -135,17 +216,21 @@ def extract_sections_from_pdf(pdf_bytes, source):
                 current_heading = block
                 current_type = _section_type_from_heading(block)
                 buffer_page = page_number
+                buffered_images = list(page_images)
                 continue
 
             if _is_table_block(block):
                 flush_buffer()
                 table_title = _table_title(block, current_heading)
+                table_html = _block_to_table_html(block)
                 section = _make_section(
                     block,
                     source=source,
                     page=page_number,
                     section_title=table_title,
                     section_type="table",
+                    tables_html=[table_html] if table_html else [],
+                    images_base64=list(dict.fromkeys(page_images)),
                 )
                 if section:
                     sections.append(section)
@@ -153,6 +238,8 @@ def extract_sections_from_pdf(pdf_bytes, source):
 
             if not buffered_paragraphs:
                 buffer_page = page_number
+            if page_images:
+                buffered_images.extend(page_images)
             buffered_paragraphs.append(block)
 
     flush_buffer()

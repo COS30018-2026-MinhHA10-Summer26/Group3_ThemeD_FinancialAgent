@@ -7,7 +7,8 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import selectinload
 
 from api.deps import db_dependency, get_current_user
-from api.models import DEFAULT_EMBEDDING_MODEL, DEFAULT_LLM_MODEL, Conversation, Project, User, project_members
+from api.generate_answer import answer_query
+from api.models import DEFAULT_EMBEDDING_MODEL, DEFAULT_LLM_MODEL, Conversation, Message, MessageRole, Project, User, project_members
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -71,6 +72,28 @@ class ConversationRead(BaseModel):
 
 class ConversationCreate(BaseModel):
     title: Optional[str] = None
+
+
+class MessageRead(BaseModel):
+    message_id: UUID
+    conversation_id: UUID
+    role: str
+    content: str
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChatRequest(BaseModel):
+    query: str
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    query_variations: list[str]
+    sources: list[dict]
+    user_message: MessageRead
+    assistant_message: MessageRead
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -148,6 +171,17 @@ def load_project(db, project_id: UUID) -> Project:
     return project
 
 
+def load_conversation(db, project_id: UUID, conversation_id: UUID) -> Conversation:
+    conversation = (
+        db.query(Conversation)
+        .filter(Conversation.project_id == project_id, Conversation.conversation_id == conversation_id)
+        .first()
+    )
+    if not conversation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+    return conversation
+
+
 def conversation_to_read(conversation: Conversation) -> ConversationRead:
     return ConversationRead(
         conversation_id=conversation.conversation_id,
@@ -164,6 +198,16 @@ def conversation_to_read(conversation: Conversation) -> ConversationRead:
         ),
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
+    )
+
+
+def message_to_read(message: Message) -> MessageRead:
+    return MessageRead(
+        message_id=message.message_id,
+        conversation_id=message.conversation_id,
+        role=message.role.value if getattr(message, "role", None) else "user",
+        content=message.content,
+        created_at=message.created_at,
     )
 
 
@@ -300,3 +344,72 @@ async def create_conversation(
         .first()
     )
     return conversation_to_read(conversation)
+
+
+@router.get("/{project_id}/conversations/{conversation_id}/messages", response_model=list[MessageRead])
+async def list_conversation_messages(
+    project_id: UUID,
+    conversation_id: UUID,
+    db: db_dependency,
+    current_user: dict = Depends(get_current_user),
+):
+    project = load_project(db, project_id)
+    require_project_access(project, current_user)
+    load_conversation(db, project_id, conversation_id)
+
+    messages = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc(), Message.message_id.asc())
+        .all()
+    )
+    return [message_to_read(message) for message in messages]
+
+
+@router.post("/{project_id}/conversations/{conversation_id}/messages", response_model=ChatResponse)
+async def send_conversation_message(
+    project_id: UUID,
+    conversation_id: UUID,
+    chat_request: ChatRequest,
+    db: db_dependency,
+    current_user: dict = Depends(get_current_user),
+):
+    project = load_project(db, project_id)
+    require_project_access(project, current_user)
+    conversation = load_conversation(db, project_id, conversation_id)
+
+    query_text = chat_request.query.strip()
+    if not query_text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Query is required")
+
+    rag_result = answer_query(
+        query=query_text,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        max_results=5,
+    )
+
+    user_message = Message(
+        conversation_id=conversation.conversation_id,
+        role=MessageRole.USER,
+        content=query_text,
+    )
+    assistant_message = Message(
+        conversation_id=conversation.conversation_id,
+        role=MessageRole.ASSISTANT,
+        content=rag_result["answer"],
+    )
+
+    db.add(user_message)
+    db.add(assistant_message)
+    db.commit()
+    db.refresh(user_message)
+    db.refresh(assistant_message)
+
+    return ChatResponse(
+        answer=rag_result["answer"],
+        query_variations=rag_result.get("query_variations", []),
+        sources=rag_result.get("sources", []),
+        user_message=message_to_read(user_message),
+        assistant_message=message_to_read(assistant_message),
+    )

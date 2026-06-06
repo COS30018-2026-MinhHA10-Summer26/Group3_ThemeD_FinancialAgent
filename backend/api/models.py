@@ -5,16 +5,18 @@ from sqlalchemy import (
     Integer,
     ForeignKey,
     Table,
+    Enum,
     TIMESTAMP,
     func,
     JSON,
-    text
+    text,
 )
 
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from pgvector.sqlalchemy import Vector
 
+import enum
 import uuid
 
 from api.database import Base
@@ -254,7 +256,7 @@ class Chunk(Base):
 
     content = Column(Text, nullable=False)
 
-    embedding = Column(Vector(384))
+    embedding = Column(Vector(1536))
 
     chunk_index = Column(Integer, nullable=False)
 
@@ -331,6 +333,12 @@ class Conversation(Base):
 # MESSAGE MODEL
 # =========================
 
+class MessageRole(str, enum.Enum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
 class Message(Base):
     __tablename__ = "messages"
 
@@ -346,11 +354,24 @@ class Message(Base):
         nullable=False
     )
 
-    content = Column(Text, nullable=False)
+    role = Column(
+        Enum(
+            MessageRole,
+            name="message_role",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False
+    )
+
+    content = Column(
+        Text,
+        nullable=False
+    )
 
     created_at = Column(
         TIMESTAMP(timezone=True),
-        server_default=func.now()
+        server_default=func.now(),
+        nullable=False
     )
 
     conversation = relationship(

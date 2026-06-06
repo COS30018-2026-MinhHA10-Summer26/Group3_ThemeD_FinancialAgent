@@ -34,6 +34,34 @@ type ProjectRow = {
   description?: string | null;
 };
 
+type MessageRow = {
+  message_id: string;
+  conversation_id: string;
+  content: string;
+  created_at?: string | null;
+  role: "user" | "assistant" | "system" | string;
+};
+
+type ChatResponse = {
+  answer: string;
+  query_variations: string[];
+  sources: Array<Record<string, unknown>>;
+  user_message: {
+    message_id: string;
+    conversation_id: string;
+      role: string;
+    content: string;
+    created_at?: string | null;
+  };
+  assistant_message: {
+    message_id: string;
+    conversation_id: string;
+      role: string;
+    content: string;
+    created_at?: string | null;
+  };
+};
+
 function decodeToken(token: string): TokenPayload | null {
   try {
     const [, payload] = token.split(".");
@@ -57,7 +85,9 @@ export default function ProjectChatPage() {
   const [currentEmail, setCurrentEmail] = useState<string>("");
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [conversation, setConversation] = useState<ConversationRow | null>(null);
+  const [messages, setMessages] = useState<MessageRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
@@ -110,15 +140,23 @@ export default function ProjectChatPage() {
 
       try {
         const api = createApiClient(authToken);
-        const [projectResponse, conversationsResponse] = await Promise.all([
+        const [projectResponse, conversationsResponse, messagesResponse] = await Promise.all([
           api.get<ProjectRow>(`/projects/${projectId}`),
           api.get<ConversationRow[]>(`/projects/${projectId}/conversations`),
+          api.get<Array<{ message_id: string; conversation_id: string; content: string; created_at?: string | null }>>(
+            `/projects/${projectId}/conversations/${conversationId}/messages`,
+          ),
         ]);
 
         if (cancelled) return;
 
         setProject(projectResponse.data);
         setConversation(conversationsResponse.data.find((row) => row.conversation_id === conversationId) ?? null);
+        setMessages(
+          messagesResponse.data.map((message) => ({
+            ...message,
+          })),
+        );
       } catch (loadError) {
         if (cancelled) return;
         setError(getApiErrorMessage(loadError, "Failed to load chat context"));
@@ -140,6 +178,32 @@ export default function ProjectChatPage() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const prompt = query.trim();
+    if (!prompt || sending || !projectId || !conversationId) return;
+
+    const authToken = localStorage.getItem("access_token") ?? (session as { backendToken?: string } | null)?.backendToken ?? "";
+    if (!authToken) return;
+
+    const api = createApiClient(authToken);
+    setSending(true);
+    setError(null);
+
+    api
+      .post<ChatResponse>(`/projects/${projectId}/conversations/${conversationId}/messages`, { query: prompt })
+      .then((response) => {
+        setMessages((currentMessages) => [
+          ...currentMessages,
+          { ...response.data.user_message },
+          { ...response.data.assistant_message },
+        ]);
+        setQuery("");
+      })
+      .catch((sendError) => {
+        setError(getApiErrorMessage(sendError, "Failed to send message"));
+      })
+      .finally(() => {
+        setSending(false);
+      });
   }
 
   return (
@@ -181,9 +245,23 @@ export default function ProjectChatPage() {
 
           <div className="flex min-h-[28rem] flex-col justify-between rounded-3xl border border-slate-200 bg-slate-50 p-5">
             <div className="space-y-4">
-              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
-                No messages yet.
-              </div>
+              {messages.length === 0 && !loading ? (
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
+                  No messages yet.
+                </div>
+              ) : null}
+              {messages.map((message) => (
+                <div
+                  key={message.message_id}
+                  className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
+                    message.role === "user"
+                      ? "ml-auto border border-slate-900 bg-slate-900 text-white"
+                      : "border border-slate-200 bg-white text-slate-700"
+                  }`}
+                >
+                  {message.content}
+                </div>
+              ))}
               {loading ? (
                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
                   Loading chat context...
@@ -197,14 +275,16 @@ export default function ProjectChatPage() {
                 onChange={(event) => setQuery(event.target.value)}
                 className="min-h-32 rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-slate-400"
                 placeholder="Type your question here..."
+                disabled={sending}
               />
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm text-slate-500">Submit is a placeholder for the next step.</p>
+                <p className="text-sm text-slate-500">Messages are scoped to this project and conversation.</p>
                 <button
                   type="submit"
-                  className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
+                  disabled={sending}
+                  className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
                 >
-                  Send
+                  {sending ? "Sending..." : "Send"}
                 </button>
               </div>
             </form>

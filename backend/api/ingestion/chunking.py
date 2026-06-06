@@ -1,4 +1,22 @@
+import importlib
+import json
+import os
 import re
+from typing import List
+
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
+openai_key = os.getenv("OPENAI_API_KEY")
+embedding_model = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=openai_key)
+model = ChatOpenAI(
+    model="gpt-4o-mini",
+    openai_api_key=openai_key
+)
 
 
 SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
@@ -198,6 +216,21 @@ def chunk_documents(documents, chunk_size, overlap):
         )
 
         for chunk_index, chunk in enumerate(raw_chunks):
+            metadata = dict(doc.get("metadata") or {})
+            metadata.setdefault(
+                "original_content",
+                {
+                    "raw_text": doc.get("text", "").strip(),
+                    "tables_html": [],
+                    "images_base64": [],
+                },
+            )
+            metadata["source"] = doc["source"]
+            metadata["page"] = doc["page"]
+            metadata["section_title"] = doc.get("section_title")
+            metadata["section_type"] = doc.get("section_type", "body")
+            metadata["chunk_id"] = f"{doc_index}-{chunk_index}"
+
             chunked_docs.append(
                 {
                     "text": chunk,
@@ -206,7 +239,180 @@ def chunk_documents(documents, chunk_size, overlap):
                     "chunk_id": f"{doc_index}-{chunk_index}",
                     "section_title": doc.get("section_title"),
                     "section_type": doc.get("section_type", "body"),
+                    "metadata": metadata,
                 }
             )
 
     return chunked_docs
+
+
+def _chunk_text(chunk):
+    if isinstance(chunk, dict):
+        return chunk.get("text", "")
+
+    return getattr(chunk, "text", "")
+
+
+def _chunk_metadata(chunk):
+    if isinstance(chunk, dict):
+        return dict(chunk.get("metadata") or {})
+
+    return dict(getattr(chunk, "metadata", {}) or {})
+
+
+def separate_content_types(chunk):
+    """Analyze what types of content are in a chunk."""
+    content_data = {
+        "text": _chunk_text(chunk),
+        "tables": [],
+        "images": [],
+        "types": ["text"],
+    }
+
+    metadata = _chunk_metadata(chunk)
+    original_content = metadata.get("original_content", {})
+
+    if isinstance(original_content, str):
+        try:
+            original_content = json.loads(original_content)
+        except json.JSONDecodeError:
+            original_content = {"raw_text": original_content}
+
+    if isinstance(original_content, dict):
+        tables = original_content.get("tables_html", []) or []
+        images = original_content.get("images_base64", []) or []
+
+        if tables:
+            content_data["types"].append("table")
+            content_data["tables"].extend(tables)
+
+        if images:
+            content_data["types"].append("image")
+            content_data["images"].extend(images)
+
+    if hasattr(chunk, "metadata") and hasattr(chunk.metadata, "orig_elements"):
+        for element in chunk.metadata.orig_elements:
+            element_type = type(element).__name__
+
+            if element_type == "Table":
+                content_data["types"].append("table")
+                table_html = getattr(element.metadata, "text_as_html", element.text)
+                content_data["tables"].append(table_html)
+
+            elif element_type == "Image":
+                if hasattr(element, "metadata") and hasattr(element.metadata, "image_base64"):
+                    content_data["types"].append("image")
+                    content_data["images"].append(element.metadata.image_base64)
+
+    content_data["types"] = list(set(content_data["types"]))
+    return content_data
+
+
+def create_ai_enhanced_summary(text: str, tables: List[str], images: List[str]) -> str:
+    """Create AI-enhanced summary for mixed content."""
+    try:
+        prompt_text = f"""You are creating a searchable description for document content retrieval.
+
+CONTENT TO ANALYZE:
+TEXT CONTENT:
+{text}
+"""
+
+        if tables:
+            prompt_text += "TABLES:\n"
+            for i, table in enumerate(tables):
+                prompt_text += f"Table {i + 1}:\n{table}\n\n"
+
+        if images:
+            prompt_text += f"\nIMAGES PRESENT: {len(images)} image(s). Describe them as best as possible from the surrounding text context.\n"
+
+        prompt_text += """
+YOUR TASK:
+Generate a comprehensive, searchable description that covers:
+
+1. Key facts, numbers, and data points from text and tables
+2. Main topics and concepts discussed
+3. Questions this content could answer
+4. Visual content analysis (charts, diagrams, patterns in images)
+5. Alternative search terms users might use
+
+Make it detailed and searchable - prioritize findability over brevity.
+
+SEARCHABLE DESCRIPTION:"""
+
+        response = model.invoke(prompt_text)
+        return response.content
+    except Exception as error:
+        summary = f"{text[:300]}..."
+        if tables:
+            summary += f" [Contains {len(tables)} table(s)]"
+        if images:
+            summary += f" [Contains {len(images)} image(s)]"
+        print(f"     AI summary failed: {error}")
+        return summary
+
+
+def summarise_chunks(chunks):
+    """Process chunks with AI summaries while preserving original metadata."""
+    print("Processing chunks with AI Summaries...")
+
+    summarised_chunks = []
+    total_chunks = len(chunks)
+
+    for i, chunk in enumerate(chunks):
+        current_chunk = i + 1
+        print(f"   Processing chunk {current_chunk}/{total_chunks}")
+
+        content_data = separate_content_types(chunk)
+
+        print(f"     Types found: {content_data['types']}")
+        print(f"     Tables: {len(content_data['tables'])}, Images: {len(content_data['images'])}")
+
+        if content_data["tables"] or content_data["images"]:
+            print("     → Creating AI summary for mixed content...")
+            enhanced_content = create_ai_enhanced_summary(
+                content_data["text"],
+                content_data["tables"],
+                content_data["images"],
+            )
+            print("     → AI summary created successfully")
+        else:
+            print("     → Using raw text (no tables/images)")
+            enhanced_content = content_data["text"]
+
+        if isinstance(chunk, dict):
+            summarised_chunk = dict(chunk)
+        else:
+            summarised_chunk = {
+                "source": getattr(chunk, "source", None),
+                "page": getattr(chunk, "page", None),
+                "chunk_id": getattr(chunk, "chunk_id", None),
+                "section_title": getattr(chunk, "section_title", None),
+                "section_type": getattr(chunk, "section_type", "body"),
+                "metadata": _chunk_metadata(chunk),
+            }
+
+        summarised_chunk["text"] = enhanced_content
+        summarised_chunk["enhanced_content"] = enhanced_content
+
+        metadata = dict(summarised_chunk.get("metadata") or {})
+        original_content = metadata.get("original_content", {})
+        if isinstance(original_content, str):
+            try:
+                original_content = json.loads(original_content)
+            except json.JSONDecodeError:
+                original_content = {"raw_text": original_content}
+
+        if not isinstance(original_content, dict):
+            original_content = {"raw_text": content_data["text"]}
+
+        original_content.setdefault("raw_text", content_data["text"])
+        original_content["tables_html"] = content_data["tables"]
+        original_content["images_base64"] = content_data["images"]
+
+        metadata["original_content"] = original_content
+        summarised_chunk["metadata"] = metadata
+        summarised_chunks.append(summarised_chunk)
+
+    print(f"Processed {len(summarised_chunks)} chunks")
+    return summarised_chunks

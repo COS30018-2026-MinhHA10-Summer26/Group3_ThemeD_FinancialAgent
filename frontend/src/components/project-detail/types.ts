@@ -55,6 +55,19 @@ export type ConversationPayload = {
   title?: string;
 };
 
+export type DocumentRow = {
+  document_id: string;
+  project_id: string;
+  project_name: string;
+  file_name: string;
+  file_type?: string | null;
+  file_path: string;
+  total_page: number;
+  total_chunk: number;
+  uploader_email?: string | null;
+  created_at?: string | null;
+};
+
 export type ModelOption = {
   value: string;
   label: string;
