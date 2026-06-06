@@ -8,10 +8,16 @@ annual reports into `data/raw`.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import re
 from typing import Any
 from urllib.parse import urljoin, urlparse
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional dependency
+    load_dotenv = None
 
 try:
     from bs4 import BeautifulSoup
@@ -35,6 +41,9 @@ REPORT_KEYWORDS = (
     "10-k",
 )
 
+if load_dotenv is not None:  # pragma: no branch - simple optional setup
+    load_dotenv()
+
 
 def official_report_tool(
     user_query: str,
@@ -54,11 +63,28 @@ def official_report_tool(
     can treat both tools similarly.
     """
 
-    normalized_website = _normalize_website(company_website)
     normalized_company = company_name or _infer_company_name(user_query)
+    normalized_website = _normalize_website(company_website)
     target_years = years or _extract_years(user_query)
     target_dir = Path(download_dir) if download_dir else RAW_DATA_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
+
+    if not normalized_company:
+        return {
+            "prompts": [],
+            "total_prompts": 0,
+            "search_strategy": "Could not infer a target company from the user query.",
+            "documents": [],
+            "downloaded_files": [],
+            "matched_links": [],
+            "search_queries": [],
+            "used_selenium": False,
+            "dry_run": dry_run,
+            "error": "company_name_missing",
+        }
+
+    if not normalized_website:
+        normalized_website = _infer_company_website_via_serpapi(normalized_company)
 
     prompts = _build_prompts(
         user_query=user_query,
@@ -67,22 +93,12 @@ def official_report_tool(
         years=target_years,
     )
 
-    if not normalized_website:
-        return {
-            "prompts": prompts,
-            "total_prompts": len(prompts),
-            "search_strategy": (
-                "Official-site report lookup requires a company website or investor-relations URL."
-            ),
-            "documents": [],
-            "downloaded_files": [],
-            "matched_links": [],
-            "used_selenium": False,
-            "dry_run": dry_run,
-            "error": "company_website_missing",
-        }
-
     if dry_run:
+        serpapi_query = _build_serpapi_query(
+            company_name=normalized_company,
+            company_website=normalized_website,
+            years=target_years,
+        )
         planned_files = [
             str(target_dir / _build_report_filename(normalized_company, year, index))
             for index, year in enumerate(target_years or [None], start=1)
@@ -90,15 +106,16 @@ def official_report_tool(
         return {
             "prompts": prompts,
             "total_prompts": len(prompts),
-            "search_strategy": "Dry run for official investor-relations report discovery.",
+            "search_strategy": "Dry run for SerpAPI-first official report discovery.",
             "documents": [
                 {
                     "text": (
-                        f"Dry run: would search the official investor-relations website {normalized_website} "
-                        f"and download annual reports for {normalized_company or 'target company'} "
-                        f"into {target_dir}. Query: {user_query}"
+                        f"Dry run: would search for official annual report PDFs using SerpAPI query "
+                        f"'{serpapi_query}', then download matches into {target_dir}. "
+                        f"Fallback source: {normalized_website or 'inferred official website search'}. "
+                        f"Query: {user_query}"
                     ),
-                    "source": normalized_website,
+                    "source": normalized_website or normalized_company,
                     "page": 1,
                     "section_title": "Official Report Dry Run",
                     "section_type": "body",
@@ -107,8 +124,11 @@ def official_report_tool(
             ],
             "downloaded_files": planned_files,
             "matched_links": [],
+            "search_queries": [serpapi_query],
             "used_selenium": False,
             "dry_run": True,
+            "resolved_company_name": normalized_company,
+            "resolved_company_website": normalized_website,
         }
 
     result = _discover_and_download_reports(
@@ -127,8 +147,11 @@ def official_report_tool(
         "documents": result["documents"],
         "downloaded_files": result["downloaded_files"],
         "matched_links": result["matched_links"],
+        "search_queries": result.get("search_queries", []),
         "used_selenium": result["used_selenium"],
         "dry_run": False,
+        "resolved_company_name": normalized_company,
+        "resolved_company_website": normalized_website,
         **({"error": result["error"]} if result.get("error") else {}),
     }
 
@@ -162,7 +185,7 @@ def _build_prompts(
 def _discover_and_download_reports(
     *,
     company_name: str | None,
-    company_website: str,
+    company_website: str | None,
     years: list[int],
     download_dir: Path,
     max_reports: int,
@@ -174,24 +197,44 @@ def _discover_and_download_reports(
             "documents": [],
             "downloaded_files": [],
             "matched_links": [],
+            "search_queries": [],
             "used_selenium": False,
             "error": "crawler_dependencies_missing",
         }
 
-    candidate_pages = _candidate_pages(company_website)
-    page_links: list[str] = []
+    search_query = _build_serpapi_query(
+        company_name=company_name,
+        company_website=company_website,
+        years=years,
+    )
+    matched_links = _search_report_links_via_serpapi(
+        search_query,
+        company_website=company_website,
+        years=years,
+    )
+
+    candidate_pages = _candidate_pages(company_website) if company_website else []
     used_selenium_flag = False
+    strategy = "Used SerpAPI PDF search modeled after ai_integration/search.py."
 
-    if use_selenium:
-        selenium_links = _collect_links_with_selenium(candidate_pages)
-        if selenium_links:
-            page_links.extend(selenium_links)
-            used_selenium_flag = True
+    if not matched_links and candidate_pages:
+        page_links: list[str] = []
+        if use_selenium:
+            selenium_links = _collect_links_with_selenium(candidate_pages)
+            if selenium_links:
+                page_links.extend(selenium_links)
+                used_selenium_flag = True
 
-    if not page_links:
-        page_links.extend(_collect_links_with_requests(candidate_pages))
+        if not page_links:
+            page_links.extend(_collect_links_with_requests(candidate_pages))
 
-    matched_links = _filter_report_links(page_links, company_website, years)
+        matched_links = _filter_report_links(page_links, company_website, years)
+        strategy = (
+            "SerpAPI returned no usable report links; fell back to Selenium-rendered investor-relations pages."
+            if used_selenium_flag
+            else "SerpAPI returned no usable report links; fell back to HTTP crawling of investor-relations pages."
+        )
+
     matched_links = matched_links[:max(max_reports, 1)]
 
     downloaded_files: list[str] = []
@@ -222,12 +265,6 @@ def _discover_and_download_reports(
         except Exception:
             continue
 
-    strategy = (
-        "Rendered investor-relations pages with Selenium before downloading PDFs."
-        if used_selenium_flag
-        else "Crawled investor-relations and annual-report pages with HTTP requests."
-    )
-
     if not downloaded_files:
         return {
             "search_strategy": strategy,
@@ -246,6 +283,7 @@ def _discover_and_download_reports(
             ],
             "downloaded_files": [],
             "matched_links": matched_links,
+            "search_queries": [search_query],
             "used_selenium": used_selenium_flag,
             "error": "no_reports_found",
         }
@@ -255,8 +293,101 @@ def _discover_and_download_reports(
         "documents": documents,
         "downloaded_files": downloaded_files,
         "matched_links": matched_links,
+        "search_queries": [search_query],
         "used_selenium": used_selenium_flag,
     }
+
+
+def _build_serpapi_query(
+    *,
+    company_name: str | None,
+    company_website: str | None,
+    years: list[int],
+) -> str:
+    label = company_name or "company"
+    year_part = " OR ".join(str(year) for year in years) if years else ""
+    parsed = urlparse(company_website) if company_website else None
+    domain = parsed.netloc if parsed else ""
+    parts = [label, "annual report"]
+    if year_part:
+        parts.append(year_part)
+    if domain:
+        parts.append(f"site:{domain}")
+    parts.append("filetype:pdf")
+    return " ".join(part for part in parts if part)
+
+
+def _search_report_links_via_serpapi(
+    search_query: str,
+    *,
+    company_website: str,
+    years: list[int],
+) -> list[str]:
+    api_key = os.getenv("SERPAPI_API_KEY") or os.getenv("API_KEY")
+    if requests is None or not api_key:
+        return []
+
+    try:
+        response = requests.get(
+            "https://serpapi.com/search",
+            params={
+                "q": search_query,
+                "api_key": api_key,
+                "num": 10,
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        return []
+
+    organic_results = payload.get("organic_results", [])
+    raw_links = [
+        result.get("link", "").strip()
+        for result in organic_results
+        if isinstance(result, dict) and result.get("link")
+    ]
+    return _filter_report_links(raw_links, company_website, years)
+
+
+def _infer_company_website_via_serpapi(company_name: str) -> str | None:
+    api_key = os.getenv("SERPAPI_API_KEY") or os.getenv("API_KEY")
+    if requests is None or not api_key:
+        return None
+
+    try:
+        response = requests.get(
+            "https://serpapi.com/search",
+            params={
+                "q": f"{company_name} investor relations official website",
+                "api_key": api_key,
+                "num": 5,
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        return None
+
+    for result in payload.get("organic_results", []):
+        if not isinstance(result, dict):
+            continue
+        link = result.get("link", "").strip()
+        if not link:
+            continue
+        lowered = link.lower()
+        if any(keyword in lowered for keyword in ("investor", "annual", "financial", "ir.")):
+            return _normalize_website(link)
+
+    for result in payload.get("organic_results", []):
+        if not isinstance(result, dict):
+            continue
+        link = result.get("link", "").strip()
+        if link:
+            return _normalize_website(link)
+    return None
 
 
 def _candidate_pages(company_website: str) -> list[str]:
@@ -325,11 +456,11 @@ def _collect_links_with_selenium(candidate_pages: list[str]) -> list[str]:
 
 def _filter_report_links(
     links: list[str],
-    company_website: str,
+    company_website: str | None,
     years: list[int],
 ) -> list[str]:
-    parsed_company = urlparse(company_website)
-    base_domain = parsed_company.netloc.lower()
+    parsed_company = urlparse(company_website) if company_website else None
+    base_domain = parsed_company.netloc.lower() if parsed_company else ""
     candidates: list[str] = []
     seen: set[str] = set()
 
@@ -340,7 +471,7 @@ def _filter_report_links(
         seen.add(normalized)
 
         parsed_link = urlparse(normalized)
-        if parsed_link.netloc and parsed_link.netloc.lower() != base_domain:
+        if base_domain and parsed_link.netloc and parsed_link.netloc.lower() != base_domain:
             continue
 
         lowered = normalized.lower()
@@ -427,13 +558,19 @@ def _extract_year_from_text(text: str) -> int | None:
 
 
 def _infer_company_name(query: str) -> str | None:
-    cleaned = re.sub(
-        r"\b(download|find|get|official|company|website|annual|report|reports|investor|relations|for|the|latest)\b",
-        " ",
-        query,
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -,:")
+    stopwords = {
+        "download", "find", "get", "official", "company", "website", "annual",
+        "report", "reports", "investor", "relations", "for", "the", "latest",
+        "from", "and", "make", "a", "an", "of", "in", "to", "what", "is",
+        "are", "financial", "statements", "please", "me", "show",
+    }
+    tokens = re.findall(r"[A-Za-z0-9&.\-]+", query)
+    filtered = [
+        token
+        for token in tokens
+        if token.lower() not in stopwords and not re.fullmatch(r"(?:19|20)\d{2}", token)
+    ]
+    cleaned = " ".join(filtered[:4]).strip(" -,:")
     return cleaned or None
 
 

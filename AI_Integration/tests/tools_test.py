@@ -75,8 +75,6 @@ def run_tools_test() -> None:
     print("\n== official_report_tool ==")
     official_result = official_report_tool(
         "Download NVIDIA annual reports from the official company website for 2024",
-        company_name="NVIDIA",
-        years=[2024],
         dry_run=True,
     )
     print(
@@ -85,6 +83,7 @@ def run_tools_test() -> None:
             "downloaded_file_count": len(official_result.get("downloaded_files", [])),
             "dry_run": official_result.get("dry_run"),
             "error": official_result.get("error"),
+            "search_queries": official_result.get("search_queries", []),
         }
     )
     if official_result.get("documents"):

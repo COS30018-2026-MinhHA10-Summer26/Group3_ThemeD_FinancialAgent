@@ -1,25 +1,28 @@
-from googlesearch import search
+import requests
+from dotenv import load_dotenv
 from bs4 import BeautifulSoup
-import requests
-from typing import Any
+from ai_integration.models.llm import get_llm
+import os
 
-# query = "Download NVIDIA annual reports from the official company website for 2024"
-# processed_query = query.replace(" ", "+")
-# results = requests.get(f"https://www.google.com/search?q={processed_query}&num=5")
-# print(f"{results.status_code} {results.reason}")
-
-# for result in results:
-#     print(result)
-import requests
-
+API_KEY = load_dotenv() and os.getenv("API_KEY")
 query = "NVIDIA annual reports 2024"
-response = requests.get("https://api.duckduckgo.com/", params={
-    'q': query,
-    'format': 'json'
+processed_query = f"{query}:pdf"
+response = requests.get("https://serpapi.com/search", params={
+    "q": query,
+    "api_key": API_KEY,
+    "num": 3
 })
 
-if response.status_code == 200:
-    data = response.json()
-    print("DuckDuckGo Results:")
-    for i, result in enumerate(data.get('Results', [])[:5], 1):
-        print(f"{i}. {result.get('Title')}: {result.get('FirstURL')}")
+data = response.json()
+for result in data.get("organic_results", []):
+    print(result["title"])
+    print(result["link"])
+    try: 
+        pdf_response = requests.get(result["link"])
+        pdf_response.raise_for_status()
+        with open("ai_integration/data/raw/temp.pdf", "wb") as f:
+            f.write(pdf_response.content)
+
+        print("Successfully extracted text from PDF.")
+    except Exception as e:
+        print(f"Error processing PDF: {e}")

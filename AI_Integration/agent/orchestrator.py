@@ -231,16 +231,16 @@ def create_orchestrator():
         return state
 
     def threshold_node(state: AgentState) -> AgentState:
-        threshold = float(state.get("retrieval_threshold", 0.25))
+        threshold = float(state.get("retrieval_threshold", 0.8))
         state["route"] = (
             "use_existing_context"
             if state.get("similarity_score", 0.0) >= threshold
-            else "web_search"
+            else "report_search"
         )
         _append_step(state, f"threshold_checked:{state['route']}")
         return state
 
-    def route_after_threshold(state: AgentState) -> str:
+    def route_after_threshold(state: AgentState) -> str:        
         return state.get("route", "use_existing_context")
 
     def query_expansion_node(state: AgentState) -> AgentState:
@@ -318,6 +318,38 @@ def create_orchestrator():
         )
         _append_step(state, "web_search_completed")
         return state
+    
+    def report_search_node(state: AgentState) -> AgentState:
+        metadata = state.setdefault("metadata", {})
+        combined_documents = []
+
+        if _needs_official_report_search(state["cleaned_query"]):
+            official_result = official_report_tool(
+                state["cleaned_query"],
+                company_name=metadata.get("company_name") or _infer_company_name_from_query(state["cleaned_query"]),
+                company_website=metadata.get("company_website"),
+                years=metadata.get("target_years"),
+                dry_run=bool(metadata.get("dry_run_downloads", False)),
+                use_selenium=bool(metadata.get("use_selenium", False)),
+            )
+            state.setdefault("tool_calls", []).append({"tool": "official_report_tool"})
+            state.setdefault("tool_results", []).append(
+                {
+                    "tool": "official_report_tool",
+                    "downloaded_file_count": len(official_result.get("downloaded_files", [])),
+                    "matched_link_count": len(official_result.get("matched_links", [])),
+                    "dry_run": official_result.get("dry_run", False),
+                }
+            )
+            combined_documents = official_result.get("documents", [])
+            metadata["official_report_strategy"] = official_result.get("search_strategy", "")
+            metadata["downloaded_report_files"] = official_result.get("downloaded_files", [])
+
+        state["web_documents"] = [
+            _normalize_document(document) for document in combined_documents
+        ]
+        _append_step(state, "report_search_completed")
+        return state
 
     def ingestion_node(state: AgentState) -> AgentState:
         documents = state.get("web_documents", [])
@@ -390,7 +422,7 @@ def create_orchestrator():
         for node in (input_node, retrieval_node, threshold_node):
             state = node(state)
         if route_after_threshold(state) == "web_search":
-            for node in (query_expansion_node, web_search_node, ingestion_node):
+            for node in (query_expansion_node, report_search_node, ingestion_node):
                 state = node(state)
         state = merge_node(state)
         state = rerank_node(state)
@@ -407,7 +439,7 @@ def create_orchestrator():
     workflow.add_node("retrieval_node", retrieval_node)
     workflow.add_node("threshold_node", threshold_node)
     workflow.add_node("query_expansion_node", query_expansion_node)
-    workflow.add_node("web_search_node", web_search_node)
+    workflow.add_node("report_search_node", report_search_node)
     workflow.add_node("ingestion_node", ingestion_node)
     workflow.add_node("merge_node", merge_node)
     workflow.add_node("rerank_node", rerank_node)
@@ -423,11 +455,11 @@ def create_orchestrator():
         route_after_threshold,
         {
             "use_existing_context": "merge_node",
-            "web_search": "query_expansion_node",
+            "report_search": "query_expansion_node",
         },
     )
-    workflow.add_edge("query_expansion_node", "web_search_node")
-    workflow.add_edge("web_search_node", "ingestion_node")
+    workflow.add_edge("query_expansion_node", "report_search_node")
+    workflow.add_edge("report_search_node", "ingestion_node")
     workflow.add_edge("ingestion_node", "merge_node")
     workflow.add_edge("merge_node", "rerank_node")
     workflow.add_edge("rerank_node", "generation_node")
@@ -448,8 +480,14 @@ def create_orchestrator():
 def run_agent(query: str, memory: dict[str, Any] | None = None) -> str:
     """Run the orchestrator and return the final user-facing output."""
 
-    orchestrator = create_orchestrator()
-    result = orchestrator.invoke(create_initial_state(query, memory))
+    result = run_agent_state(query, memory)
     if result.get("report_requested") and result.get("report"):
         return result["report"]
     return result.get("response", "")
+
+
+def run_agent_state(query: str, memory: dict[str, Any] | None = None) -> AgentState:
+    """Run the orchestrator and return the full final workflow state."""
+
+    orchestrator = create_orchestrator()
+    return orchestrator.invoke(create_initial_state(query, memory))

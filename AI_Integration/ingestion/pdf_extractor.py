@@ -75,7 +75,14 @@ def _table_title(block, fallback_heading=None):
 
 
 def _make_section(text, source, page, section_title=None, section_type="body"):
-    normalized = " ".join(text.split())
+    paragraphs = []
+    for block in re.split(r"\n\s*\n", text):
+        lines = [re.sub(r"\s+", " ", line).strip() for line in block.splitlines()]
+        compact = " ".join(line for line in lines if line).strip()
+        if compact:
+            paragraphs.append(compact)
+
+    normalized = "\n\n".join(paragraphs).strip()
     if not normalized:
         return None
 

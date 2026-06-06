@@ -14,4 +14,4 @@ class EmbeddingModel:
 
 # model = EmbeddingModel("all-MiniLM-L6-v2")
 # emb = model.embed(["test sentence"])
-# print(emb.shape)
+# print(emb.shape

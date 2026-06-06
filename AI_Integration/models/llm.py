@@ -12,7 +12,7 @@ import re
 from typing import Iterable
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-CONTEXT_PATH = "agent_context.md"
+CONTEXT_PATH = "ai_integration/models/agent_context.md"
 with open(CONTEXT_PATH, "r") as f:
     try:
         CONTEXT = f.read()
@@ -42,9 +42,15 @@ def _message_content(messages: Iterable[dict[str, str] | tuple[str, str]]) -> li
 class FinancialLLM:
     """A deterministic fallback used for planning and synthesis."""
     def __init__(self) -> None:
-        self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-7B-Instruct")
-        self.model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2-7B-Instruct", device_map="auto")
-        self.model.eval()
+        self.model_name = "Qwen/Qwen2.5-3B-Instruct"
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            self.model_name,
+            torch_dtype="auto",
+            device_map="auto"
+        )
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+
 
     def synthesize(
         self,
