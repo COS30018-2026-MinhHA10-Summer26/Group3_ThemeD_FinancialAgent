@@ -10,7 +10,7 @@ beautifulsoup4==4.12.2
 google-search-results==2.4.2
 
 # LLM & NLP
-transformers==4.35.2
+transformers==4.51.3
 sentence-transformers==2.2.2
 torch==2.1.1
 

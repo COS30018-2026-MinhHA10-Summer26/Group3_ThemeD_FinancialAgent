@@ -1,11 +1,13 @@
 import os
 import yaml
 from ai_integration.rag.retriever import Retriever
-
+from pathlib import Path
 
 def main():
 
-    config_path = os.path.expanduser("~/financial_agent/ai_integration/config.yaml")
+    current_dir = Path(__file__).resolve().parent
+
+    config_path = current_dir.parent / "config.yaml"
     config = yaml.safe_load(open(config_path))
 
     retriever = Retriever(config)
