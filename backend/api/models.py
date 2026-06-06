@@ -17,7 +17,7 @@ from pgvector.sqlalchemy import Vector
 
 import uuid
 
-from database import Base
+from api.database import Base
 
 DEFAULT_EMBEDDING_MODEL = "OpenAIEmbedding"
 DEFAULT_LLM_MODEL = "OpenAI"
