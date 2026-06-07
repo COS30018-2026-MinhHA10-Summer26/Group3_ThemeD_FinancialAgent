@@ -1,9 +1,10 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { createApiClient, getApiErrorMessage } from "@/lib/api";
+import ReactMarkdown from "react-markdown";
 
 type RoleName = "Admin" | "User" | string;
 
@@ -49,14 +50,14 @@ type ChatResponse = {
   user_message: {
     message_id: string;
     conversation_id: string;
-      role: string;
+    role: string;
     content: string;
     created_at?: string | null;
   };
   assistant_message: {
     message_id: string;
     conversation_id: string;
-      role: string;
+    role: string;
     content: string;
     created_at?: string | null;
   };
@@ -90,6 +91,7 @@ export default function ProjectChatPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const messagesRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (status === "loading") {
@@ -143,9 +145,15 @@ export default function ProjectChatPage() {
         const [projectResponse, conversationsResponse, messagesResponse] = await Promise.all([
           api.get<ProjectRow>(`/projects/${projectId}`),
           api.get<ConversationRow[]>(`/projects/${projectId}/conversations`),
-          api.get<Array<{ message_id: string; conversation_id: string; content: string; created_at?: string | null }>>(
-            `/projects/${projectId}/conversations/${conversationId}/messages`,
-          ),
+          api.get<
+            Array<{
+              message_id: string;
+              conversation_id: string;
+              content: string;
+              created_at?: string | null;
+              role?: string;
+            }>
+          >(`/projects/${projectId}/conversations/${conversationId}/messages`),
         ]);
 
         if (cancelled) return;
@@ -155,6 +163,7 @@ export default function ProjectChatPage() {
         setMessages(
           messagesResponse.data.map((message) => ({
             ...message,
+            role: message.role ?? "assistant",
           })),
         );
       } catch (loadError) {
@@ -173,6 +182,12 @@ export default function ProjectChatPage() {
       cancelled = true;
     };
   }, [currentRole, conversationId, projectId, session]);
+
+  useEffect(() => {
+    if (messagesRef.current) {
+      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+    }
+  }, [messages]);
 
   const title = useMemo(() => conversation?.title || "Chat", [conversation]);
 
@@ -243,8 +258,8 @@ export default function ProjectChatPage() {
             </p>
           </div>
 
-          <div className="flex min-h-[28rem] flex-col justify-between rounded-3xl border border-slate-200 bg-slate-50 p-5">
-            <div className="space-y-4">
+          <div className="flex h-[calc(150vh-22rem)] max-h-[42rem] min-h-[28rem] flex-col rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <div ref={messagesRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2">
               {messages.length === 0 && !loading ? (
                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
                   No messages yet.
@@ -253,13 +268,16 @@ export default function ProjectChatPage() {
               {messages.map((message) => (
                 <div
                   key={message.message_id}
-                  className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
-                    message.role === "user"
-                      ? "ml-auto border border-slate-900 bg-slate-900 text-white"
-                      : "border border-slate-200 bg-white text-slate-700"
-                  }`}
+                  className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${message.role === "user"
+                    ? "ml-auto border border-slate-900 bg-slate-900 text-white"
+                    : "border border-slate-200 bg-white text-slate-700"
+                    }`}
                 >
-                  {message.content}
+                  <div className="prose prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_p]:mb-3 [&_p+p]:mt-0">
+                    <ReactMarkdown>
+                      {message.content}
+                    </ReactMarkdown>
+                  </div>
                 </div>
               ))}
               {loading ? (
@@ -268,6 +286,9 @@ export default function ProjectChatPage() {
                 </div>
               ) : null}
             </div>
+
+            {/* Auto-scroll to bottom when messages change */}
+
 
             <form onSubmit={handleSubmit} className="mt-6 grid gap-3">
               <textarea
