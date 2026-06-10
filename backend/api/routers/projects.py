@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from api.deps import db_dependency, get_current_user
 from api.generate_answer import answer_query
+from api.ingestion.pdf_chat_processor import process_pdf_for_chat
 from api.models import DEFAULT_EMBEDDING_MODEL, DEFAULT_LLM_MODEL, Conversation, Message, MessageRole, Project, User, project_members
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -371,6 +372,7 @@ async def send_conversation_message(
     db: db_dependency,
     query: str = Form(...),
     image: UploadFile | None = File(None),
+    pdf: UploadFile | None = File(None),
     current_user: dict = Depends(get_current_user),
 ):
     project = load_project(db, project_id)
@@ -399,12 +401,30 @@ async def send_conversation_message(
         import base64
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
+    # Process optional PDF upload (temporary, in-memory)
+    pdf_chunks = None
+    if pdf and pdf.filename:
+        pdf_filename = pdf.filename or "document.pdf"
+        if pdf.content_type not in {"application/pdf"} and not pdf_filename.lower().endswith(".pdf"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only PDF files are supported. Please upload a .pdf file.",
+            )
+        pdf_bytes = await pdf.read()
+        if len(pdf_bytes) > 5 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="PDF too large (max 5MB)",
+            )
+        pdf_chunks = process_pdf_for_chat(pdf_bytes, pdf_filename)
+
     rag_result = answer_query(
         query=query_text,
         project_id=project_id,
         conversation_id=conversation_id,
         max_results=5,
         image_data_url=image_base64,
+        pdf_chunks=pdf_chunks,
     )
 
     now = datetime.utcnow()

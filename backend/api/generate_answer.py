@@ -254,8 +254,11 @@ Do not repeat the original query."""
 
 
 class HybridMultiQueryRetriever:
-    def __init__(self, indexed_chunks: Sequence[IndexedChunk]):
-        self.indexed_chunks = list(indexed_chunks)
+    def __init__(self, indexed_chunks: Sequence[IndexedChunk], extra_chunks: Sequence[IndexedChunk] | None = None):
+        all_chunks = list(indexed_chunks)
+        if extra_chunks:
+            all_chunks.extend(extra_chunks)
+        self.indexed_chunks = all_chunks
         self.documents = [indexed_chunk.document for indexed_chunk in self.indexed_chunks]
         self.embeddings = [indexed_chunk.embedding for indexed_chunk in self.indexed_chunks]
         self.keyword_index = BM25Index(self.documents)
@@ -401,7 +404,7 @@ def build_conversation_history_block(conversation_history: Sequence[Conversation
     return "\n".join(lines)
 
 
-def generate_final_answer(chunks, query, conversation_history: Sequence[ConversationTurn] | None = None, image_base64: str | None = None):
+def generate_final_answer(chunks, query, conversation_history: Sequence[ConversationTurn] | None = None, image_base64: str | None = None, has_uploaded_pdf: bool = False):
     """Generate final answer using multimodal content"""
     
     try:
@@ -413,12 +416,21 @@ def generate_final_answer(chunks, query, conversation_history: Sequence[Conversa
             if has_media
             else "No image or table content was found in base64.txt. If relevant, you may say you don't have image."
         )
+
+        # Build source-awareness instruction for uploaded PDF
+        source_instruction = ""
+        if has_uploaded_pdf:
+            source_instruction = """\n\nIMPORTANT SOURCE DISTINCTION:
+Some documents below come from the project database (existing data), and some come from a file the user just uploaded (marked with source_type: user_upload).
+When the user asks for comparisons (e.g. comparing this year vs last year), clearly compare data from BOTH sources.
+Label which information comes from existing database documents vs the uploaded file."""
         
         # Build the text prompt
         prompt_text = f"""Based on the following documents, please answer this question: {query}
 
 CONTENT TO ANALYZE:
 {media_instruction}
+{source_instruction}
 """
 
         history_block = build_conversation_history_block(conversation_history or [])
@@ -426,7 +438,15 @@ CONTENT TO ANALYZE:
             prompt_text += f"\n{history_block}\n"
         
         for i, chunk in enumerate(chunks):
-            prompt_text += f"--- Document {i+1} ---\n"
+            source_label = ""
+            if has_uploaded_pdf:
+                source_type = chunk.metadata.get("source_type", "database")
+                source_file = chunk.metadata.get("source_file", "unknown")
+                if source_type == "user_upload":
+                    source_label = f" [SOURCE: User uploaded file - {source_file}]"
+                else:
+                    source_label = f" [SOURCE: Project database - {source_file}]"
+            prompt_text += f"--- Document {i+1}{source_label} ---\n"
             
             original_content = chunk.metadata.get("original_content")
             if original_content:
@@ -477,9 +497,10 @@ def answer_query(
     max_results: int = 5,
     image_base64: str | None = None,
     image_data_url: str | None = None,
+    pdf_chunks: list | None = None,
 ) -> dict:
     indexed_chunks = load_chunks_from_database(project_id)
-    retriever = HybridMultiQueryRetriever(indexed_chunks)
+    retriever = HybridMultiQueryRetriever(indexed_chunks, extra_chunks=pdf_chunks)
     contextual_query, conversation_history = prepare_history_aware_query(query, conversation_id)
     fused_results, query_variations = retriever.search_multi_query(
         query=contextual_query,
@@ -505,7 +526,8 @@ def answer_query(
         resolved_image_base64 = image_base64
 
     answer = generate_final_answer(
-        chunks, query, conversation_history=conversation_history, image_base64=resolved_image_base64
+        chunks, query, conversation_history=conversation_history, image_base64=resolved_image_base64,
+        has_uploaded_pdf=bool(pdf_chunks),
     )
 
     return {

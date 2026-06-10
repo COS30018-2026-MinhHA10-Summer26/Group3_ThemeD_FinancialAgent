@@ -94,8 +94,10 @@ export default function ProjectChatPage() {
   const [query, setQuery] = useState("");
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [selectedPdf, setSelectedPdf] = useState<File | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (status === "loading") {
@@ -221,6 +223,28 @@ export default function ProjectChatPage() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
+  function handlePdfSelect(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      setError("Only PDF files are supported.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError("PDF too large (max 5MB)");
+      return;
+    }
+
+    setSelectedPdf(file);
+    setError(null);
+  }
+
+  function removePdf() {
+    setSelectedPdf(null);
+    if (pdfInputRef.current) pdfInputRef.current.value = "";
+  }
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const prompt = query.trim();
@@ -238,6 +262,9 @@ export default function ProjectChatPage() {
     if (selectedImage) {
       formData.append("image", selectedImage);
     }
+    if (selectedPdf) {
+      formData.append("pdf", selectedPdf);
+    }
 
     api
       .post<ChatResponse>(
@@ -253,6 +280,7 @@ export default function ProjectChatPage() {
         ]);
         setQuery("");
         removeImage();
+        removePdf();
       })
       .catch((sendError) => {
         setError(getApiErrorMessage(sendError, "Failed to send message"));
@@ -341,6 +369,14 @@ export default function ProjectChatPage() {
                 className="hidden"
                 id="chat-image-upload"
               />
+              <input
+                ref={pdfInputRef}
+                type="file"
+                accept=".pdf,application/pdf"
+                onChange={handlePdfSelect}
+                className="hidden"
+                id="chat-pdf-upload"
+              />
 
               {/* Image preview */}
               {imagePreview ? (
@@ -360,6 +396,35 @@ export default function ProjectChatPage() {
                     <button
                       type="button"
                       onClick={removeImage}
+                      className="mt-1 self-start rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-100"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* PDF preview */}
+              {selectedPdf ? (
+                <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-rose-200 bg-rose-50">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-rose-500">
+                      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                      <polyline points="14 2 14 8 20 8" />
+                      <path d="M10 13v-1h4v1" />
+                      <path d="M10 17v-1h4v1" />
+                    </svg>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <p className="text-sm font-medium text-slate-700 truncate max-w-[200px]">
+                      {selectedPdf.name}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      {(selectedPdf.size / 1024).toFixed(1)} KB
+                    </p>
+                    <button
+                      type="button"
+                      onClick={removePdf}
                       className="mt-1 self-start rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-100"
                     >
                       Remove
@@ -393,11 +458,24 @@ export default function ProjectChatPage() {
                     Image
                   </button>
                   <button
+                    type="button"
+                    onClick={() => pdfInputRef.current?.click()}
+                    disabled={sending}
+                    className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    title="Attach PDF"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                    PDF
+                  </button>
+                  <button
                     type="submit"
                     disabled={sending}
                     className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
                   >
-                    {sending ? "Sending..." : "Send"}
+                    {sending ? (selectedPdf ? "Processing PDF..." : "Sending...") : "Send"}
                   </button>
                 </div>
               </div>
