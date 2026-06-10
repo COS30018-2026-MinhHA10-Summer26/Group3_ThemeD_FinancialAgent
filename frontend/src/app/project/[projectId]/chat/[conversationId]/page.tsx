@@ -1,10 +1,11 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { createApiClient, getApiErrorMessage } from "@/lib/api";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type RoleName = "Admin" | "User" | string;
 
@@ -91,7 +92,10 @@ export default function ProjectChatPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (status === "loading") {
@@ -191,6 +195,32 @@ export default function ProjectChatPage() {
 
   const title = useMemo(() => conversation?.title || "Chat", [conversation]);
 
+  function handleImageSelect(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const allowed = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+    if (!allowed.includes(file.type)) {
+      setError("Unsupported image type. Allowed: PNG, JPEG, GIF, WebP");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError("Image too large (max 10MB)");
+      return;
+    }
+
+    setSelectedImage(file);
+    setImagePreview(URL.createObjectURL(file));
+    setError(null);
+  }
+
+  function removeImage() {
+    setSelectedImage(null);
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImagePreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const prompt = query.trim();
@@ -203,8 +233,18 @@ export default function ProjectChatPage() {
     setSending(true);
     setError(null);
 
+    const formData = new FormData();
+    formData.append("query", prompt);
+    if (selectedImage) {
+      formData.append("image", selectedImage);
+    }
+
     api
-      .post<ChatResponse>(`/projects/${projectId}/conversations/${conversationId}/messages`, { query: prompt })
+      .post<ChatResponse>(
+        `/projects/${projectId}/conversations/${conversationId}/messages`,
+        formData,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      )
       .then((response) => {
         setMessages((currentMessages) => [
           ...currentMessages,
@@ -212,6 +252,7 @@ export default function ProjectChatPage() {
           { ...response.data.assistant_message },
         ]);
         setQuery("");
+        removeImage();
       })
       .catch((sendError) => {
         setError(getApiErrorMessage(sendError, "Failed to send message"));
@@ -273,8 +314,8 @@ export default function ProjectChatPage() {
                     : "border border-slate-200 bg-white text-slate-700"
                     }`}
                 >
-                  <div className="prose prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_p]:mb-3 [&_p+p]:mt-0">
-                    <ReactMarkdown>
+                  <div className="prose prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_p]:mb-3 [&_p+p]:mt-0 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_table]:overflow-hidden [&_table]:rounded-xl [&_table]:border [&_table]:border-slate-200 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:border-slate-200 [&_td]:px-3 [&_td]:py-2 [&_tr:nth-child(even)]:bg-slate-50">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
                       {message.content}
                     </ReactMarkdown>
                   </div>
@@ -291,6 +332,42 @@ export default function ProjectChatPage() {
 
 
             <form onSubmit={handleSubmit} className="mt-6 grid gap-3">
+              {/* Hidden file input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                onChange={handleImageSelect}
+                className="hidden"
+                id="chat-image-upload"
+              />
+
+              {/* Image preview */}
+              {imagePreview ? (
+                <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <img
+                    src={imagePreview}
+                    alt="Upload preview"
+                    className="h-20 w-20 rounded-xl border border-slate-200 object-cover"
+                  />
+                  <div className="flex flex-col gap-1">
+                    <p className="text-sm font-medium text-slate-700 truncate max-w-[200px]">
+                      {selectedImage?.name}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      {selectedImage ? `${(selectedImage.size / 1024).toFixed(1)} KB` : ""}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={removeImage}
+                      className="mt-1 self-start rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-100"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
               <textarea
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -300,13 +377,29 @@ export default function ProjectChatPage() {
               />
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm text-slate-500">Messages are scoped to this project and conversation.</p>
-                <button
-                  type="submit"
-                  disabled={sending}
-                  className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
-                >
-                  {sending ? "Sending..." : "Send"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={sending}
+                    className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    title="Attach image"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                      <circle cx="9" cy="9" r="2" />
+                      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                    </svg>
+                    Image
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={sending}
+                    className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                  >
+                    {sending ? "Sending..." : "Send"}
+                  </button>
+                </div>
               </div>
             </form>
           </div>

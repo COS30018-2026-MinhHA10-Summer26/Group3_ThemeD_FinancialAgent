@@ -8,6 +8,7 @@ from typing import Sequence
 
 from dotenv import load_dotenv
 from langchain_core.documents import Document
+from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import BaseModel
 
@@ -400,7 +401,7 @@ def build_conversation_history_block(conversation_history: Sequence[Conversation
     return "\n".join(lines)
 
 
-def generate_final_answer(chunks, query, conversation_history: Sequence[ConversationTurn] | None = None):
+def generate_final_answer(chunks, query, conversation_history: Sequence[ConversationTurn] | None = None, image_base64: str | None = None):
     """Generate final answer using multimodal content"""
     
     try:
@@ -454,14 +455,29 @@ CONTENT TO ANALYZE:
 
 ANSWER:"""
 
-        response = llm.invoke(prompt_text)
+        if image_base64:
+            
+            message = HumanMessage(content=[
+                {"type": "text", "text": prompt_text},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}},
+            ])
+            response = llm.invoke([message])
+        else:
+            response = llm.invoke(prompt_text)
         return response.content
         
     except Exception as e:
         print(f"❌ Answer generation failed: {e}")
         return "Sorry, I encountered an error while generating the answer."
 
-def answer_query(query: str, project_id, conversation_id=None, max_results: int = 5) -> dict:
+def answer_query(
+    query: str,
+    project_id,
+    conversation_id=None,
+    max_results: int = 5,
+    image_base64: str | None = None,
+    image_data_url: str | None = None,
+) -> dict:
     indexed_chunks = load_chunks_from_database(project_id)
     retriever = HybridMultiQueryRetriever(indexed_chunks)
     contextual_query, conversation_history = prepare_history_aware_query(query, conversation_id)
@@ -476,7 +492,21 @@ def answer_query(query: str, project_id, conversation_id=None, max_results: int 
     )
 
     chunks = [result.document for result in fused_results[:max_results]]
-    answer = generate_final_answer(chunks, query, conversation_history=conversation_history)
+
+    # Normalize image input: prefer explicit data URL if provided, else use raw base64
+    resolved_image_base64 = None
+    if image_data_url:
+        data = image_data_url.strip()
+        if data.startswith("data:") and "," in data:
+            resolved_image_base64 = data.split(",", 1)[1]
+        else:
+            resolved_image_base64 = data
+    elif image_base64:
+        resolved_image_base64 = image_base64
+
+    answer = generate_final_answer(
+        chunks, query, conversation_history=conversation_history, image_base64=resolved_image_base64
+    )
 
     return {
         "query": query,

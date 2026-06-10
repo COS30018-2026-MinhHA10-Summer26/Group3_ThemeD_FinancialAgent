@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import selectinload
 
@@ -84,8 +84,6 @@ class MessageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ChatRequest(BaseModel):
-    query: str
 
 
 class ChatResponse(BaseModel):
@@ -370,34 +368,57 @@ async def list_conversation_messages(
 async def send_conversation_message(
     project_id: UUID,
     conversation_id: UUID,
-    chat_request: ChatRequest,
     db: db_dependency,
+    query: str = Form(...),
+    image: UploadFile | None = File(None),
     current_user: dict = Depends(get_current_user),
 ):
     project = load_project(db, project_id)
     require_project_access(project, current_user)
     conversation = load_conversation(db, project_id, conversation_id)
 
-    query_text = chat_request.query.strip()
+    query_text = query.strip()
     if not query_text:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Query is required")
+
+    # Process optional image upload
+    image_base64 = None
+    if image and image.filename:
+        allowed_types = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+        if image.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported image type: {image.content_type}. Allowed: {', '.join(allowed_types)}",
+            )
+        image_bytes = await image.read()
+        if len(image_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Image too large (max 10MB)",
+            )
+        import base64
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
     rag_result = answer_query(
         query=query_text,
         project_id=project_id,
         conversation_id=conversation_id,
         max_results=5,
+        image_data_url=image_base64,
     )
 
+    now = datetime.utcnow()
     user_message = Message(
         conversation_id=conversation.conversation_id,
         role=MessageRole.USER,
         content=query_text,
+        created_at=now,
     )
     assistant_message = Message(
         conversation_id=conversation.conversation_id,
         role=MessageRole.ASSISTANT,
         content=rag_result["answer"],
+        created_at=now + timedelta(microseconds=1),
     )
 
     db.add(user_message)
