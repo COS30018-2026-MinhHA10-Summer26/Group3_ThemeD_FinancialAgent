@@ -76,6 +76,21 @@ function decodeToken(token: string): TokenPayload | null {
   }
 }
 
+/* ──────────────────────────────────────────── */
+/*  Typing dots animation for assistant        */
+/* ──────────────────────────────────────────── */
+function TypingIndicator() {
+  return (
+    <div className="chat-bubble-assistant animate-chat-fade-in">
+      <div className="flex items-center gap-1.5 px-1 py-1">
+        <span className="typing-dot" style={{ animationDelay: "0ms" }} />
+        <span className="typing-dot" style={{ animationDelay: "150ms" }} />
+        <span className="typing-dot" style={{ animationDelay: "300ms" }} />
+      </div>
+    </div>
+  );
+}
+
 export default function ProjectChatPage() {
   const router = useRouter();
   const params = useParams<{ projectId: string | string[]; conversationId: string | string[] }>();
@@ -95,9 +110,11 @@ export default function ProjectChatPage() {
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [selectedPdf, setSelectedPdf] = useState<File | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pdfInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     if (status === "loading") {
@@ -195,6 +212,14 @@ export default function ProjectChatPage() {
     }
   }, [messages]);
 
+  /* Auto-resize textarea */
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = Math.min(textarea.scrollHeight, 200) + "px";
+  }, [query]);
+
   const title = useMemo(() => conversation?.title || "Chat", [conversation]);
 
   function handleImageSelect(event: ChangeEvent<HTMLInputElement>) {
@@ -290,228 +315,517 @@ export default function ProjectChatPage() {
       });
   }
 
+  function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      const form = event.currentTarget.closest("form");
+      if (form) form.requestSubmit();
+    }
+  }
+
+  const hasAttachments = !!imagePreview || !!selectedPdf;
+
   return (
-    <section className="mx-auto flex min-h-[calc(100vh-6rem)] max-w-7xl flex-col px-6 py-10 sm:px-10 lg:px-12">
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <div>
-          <button
-            type="button"
-            onClick={() => router.push(`/project/${projectId}`)}
-            className="text-sm font-medium text-slate-500 transition hover:text-slate-800"
-          >
-            Back to project
-          </button>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight">{title}</h1>
-          <p className="mt-2 text-slate-600">
-            Conversation <span className="font-medium text-slate-900">{conversationId}</span>
-          </p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
-          RAG chat placeholder
-        </div>
-      </div>
+    <>
+      {/* ── Inline styles for animations ── */}
+      <style>{`
+        @keyframes chat-fade-in {
+          from { opacity: 0; transform: translateY(12px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .animate-chat-fade-in {
+          animation: chat-fade-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
 
-      {error ? (
-        <div className="mb-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {error}
-        </div>
-      ) : null}
+        @keyframes typing-bounce {
+          0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+          30%            { transform: translateY(-6px); opacity: 1; }
+        }
+        .typing-dot {
+          display: inline-block;
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          background: #94a3b8;
+          animation: typing-bounce 1.2s ease-in-out infinite;
+        }
 
-      <div className="grid flex-1 gap-6 lg:grid-cols-[1fr_0.95fr]">
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-4">
-            <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">Chat</p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight">Ask the RAG model</h2>
-            <p className="mt-2 text-sm text-slate-500">
-              This page is ready for conversation flow. Query submission is disabled for now.
-            </p>
+        @keyframes shimmer {
+          0%   { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        .chat-shimmer {
+          background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+          background-size: 200% 100%;
+          animation: shimmer 1.8s ease-in-out infinite;
+        }
+
+        @keyframes sidebar-slide {
+          from { opacity: 0; transform: translateX(20px); }
+          to   { opacity: 1; transform: translateX(0); }
+        }
+        .animate-sidebar-slide {
+          animation: sidebar-slide 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes pulse-ring {
+          0%   { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.3); }
+          70%  { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+        }
+
+        .chat-input-focused {
+          animation: pulse-ring 2s ease-out infinite;
+        }
+
+        /* Custom scrollbar */
+        .chat-scroll::-webkit-scrollbar { width: 6px; }
+        .chat-scroll::-webkit-scrollbar-track { background: transparent; }
+        .chat-scroll::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 999px;
+        }
+        .chat-scroll::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* Message bubbles */
+        .chat-bubble-user {
+          background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+          color: white;
+          border-radius: 20px 20px 6px 20px;
+          padding: 14px 18px;
+          max-width: 75%;
+          margin-left: auto;
+          box-shadow: 0 2px 12px rgba(99, 102, 241, 0.25);
+        }
+
+        .chat-bubble-assistant {
+          background: white;
+          color: #1e293b;
+          border: 1px solid #e2e8f0;
+          border-radius: 20px 20px 20px 6px;
+          padding: 14px 18px;
+          max-width: 75%;
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+        }
+
+        .chat-bubble-user .prose { color: white; }
+        .chat-bubble-user .prose strong { color: white; }
+        .chat-bubble-user .prose a { color: #c7d2fe; }
+        .chat-bubble-user .prose code { color: #e0e7ff; background: rgba(255,255,255,0.15); }
+
+        .chat-bubble-assistant .prose { color: #334155; }
+
+        /* Gradient mesh background for chat area */
+        .chat-bg {
+          background:
+            radial-gradient(ellipse at 10% 20%, rgba(99, 102, 241, 0.04) 0%, transparent 50%),
+            radial-gradient(ellipse at 90% 80%, rgba(139, 92, 246, 0.04) 0%, transparent 50%),
+            #f8fafc;
+        }
+      `}</style>
+
+      <section className="flex h-[calc(100vh-5rem)] flex-col">
+        {/* ── Top bar ── */}
+        <div className="flex items-center justify-between border-b border-slate-200 bg-white/80 px-6 py-3 backdrop-blur-md">
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={() => router.push(`/project/${projectId}`)}
+              className="group flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-hover:-translate-x-0.5">
+                <path d="m15 18-6-6 6-6" />
+              </svg>
+              Back
+            </button>
+            <div className="h-5 w-px bg-slate-200" />
+            <div className="flex items-center gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-500 shadow-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-sm font-semibold tracking-tight text-slate-900">{title}</h1>
+                <p className="text-xs text-slate-400">{project?.name || "Loading..."}</p>
+              </div>
+            </div>
           </div>
 
-          <div className="flex h-[calc(150vh-22rem)] max-h-[42rem] min-h-[28rem] flex-col rounded-3xl border border-slate-200 bg-slate-50 p-5">
-            <div ref={messagesRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2">
-              {messages.length === 0 && !loading ? (
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
-                  No messages yet.
-                </div>
-              ) : null}
-              {messages.map((message) => (
-                <div
-                  key={message.message_id}
-                  className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${message.role === "user"
-                    ? "ml-auto border border-slate-900 bg-slate-900 text-white"
-                    : "border border-slate-200 bg-white text-slate-700"
-                    }`}
-                >
-                  <div className="prose prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_p]:mb-3 [&_p+p]:mt-0 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_table]:overflow-hidden [&_table]:rounded-xl [&_table]:border [&_table]:border-slate-200 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:border-slate-200 [&_td]:px-3 [&_td]:py-2 [&_tr:nth-child(even)]:bg-slate-50">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {message.content}
-                    </ReactMarkdown>
+          <div className="flex items-center gap-2">
+            {/* Message count badge */}
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-500">
+              {messages.length} messages
+            </span>
+            {/* Sidebar toggle */}
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition ${sidebarOpen
+                  ? "border-indigo-200 bg-indigo-50 text-indigo-600"
+                  : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50"
+                }`}
+              title="Toggle project info"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 16v-4" />
+                <path d="M12 8h.01" />
+              </svg>
+              Info
+            </button>
+          </div>
+        </div>
+
+        {/* ── Error toast ── */}
+        {error ? (
+          <div className="mx-6 mt-3 animate-chat-fade-in rounded-xl border border-rose-200 bg-rose-50/80 px-4 py-3 text-sm text-rose-700 backdrop-blur-sm">
+            <div className="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="m15 9-6 6" />
+                <path d="m9 9 6 6" />
+              </svg>
+              {error}
+            </div>
+          </div>
+        ) : null}
+
+        {/* ── Main content area ── */}
+        <div className="flex min-h-0 flex-1">
+          {/* ── Chat column (main) ── */}
+          <div className="flex flex-1 flex-col">
+            {/* Messages area */}
+            <div
+              ref={messagesRef}
+              className="chat-bg chat-scroll flex-1 overflow-y-auto px-4 py-6 sm:px-8 lg:px-16 xl:px-24"
+            >
+              <div className="mx-auto max-w-3xl space-y-4">
+                {/* Empty state */}
+                {messages.length === 0 && !loading ? (
+                  <div className="flex flex-col items-center justify-center py-20 animate-chat-fade-in">
+                    <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-100 to-violet-100">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="url(#emptyGrad)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <defs>
+                          <linearGradient id="emptyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stopColor="#6366f1" />
+                            <stop offset="100%" stopColor="#8b5cf6" />
+                          </linearGradient>
+                        </defs>
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                      </svg>
+                    </div>
+                    <h3 className="text-lg font-semibold text-slate-700">Start the conversation</h3>
+                    <p className="mt-2 max-w-sm text-center text-sm text-slate-400">
+                      Ask the RAG model anything about your project documents. Attach images or PDFs for richer analysis.
+                    </p>
                   </div>
-                </div>
-              ))}
-              {loading ? (
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
-                  Loading chat context...
-                </div>
-              ) : null}
+                ) : null}
+
+                {/* Messages */}
+                {messages.map((message, index) => (
+                  <div
+                    key={message.message_id}
+                    className={`flex animate-chat-fade-in ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                    style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}
+                  >
+                    {message.role !== "user" ? (
+                      <div className="mr-3 mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-500">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 8V4H8" />
+                          <rect width="16" height="12" x="4" y="8" rx="2" />
+                          <path d="M2 14h2" />
+                          <path d="M20 14h2" />
+                          <path d="M15 13v2" />
+                          <path d="M9 13v2" />
+                        </svg>
+                      </div>
+                    ) : null}
+                    <div className={message.role === "user" ? "chat-bubble-user" : "chat-bubble-assistant"}>
+                      <div className={`prose prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_p]:mb-3 [&_p+p]:mt-0 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_table]:overflow-hidden [&_table]:rounded-xl [&_table]:border [&_table]:border-slate-200 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:border-slate-200 [&_td]:px-3 [&_td]:py-2 [&_tr:nth-child(even)]:bg-slate-50`}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                      {message.created_at ? (
+                        <p className={`mt-2 text-[10px] ${message.role === "user" ? "text-indigo-200" : "text-slate-300"}`}>
+                          {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      ) : null}
+                    </div>
+                    {message.role === "user" ? (
+                      <div className="ml-3 mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-800">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                          <circle cx="12" cy="7" r="4" />
+                        </svg>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+
+                {/* Loading state */}
+                {loading ? (
+                  <div className="space-y-4">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className={`chat-shimmer rounded-2xl ${i % 2 === 0 ? "ml-auto w-2/3" : "w-3/4"}`} style={{ height: `${40 + i * 12}px` }} />
+                    ))}
+                  </div>
+                ) : null}
+
+                {/* Typing indicator */}
+                {sending ? (
+                  <div className="flex justify-start">
+                    <div className="mr-3 mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-500">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 8V4H8" />
+                        <rect width="16" height="12" x="4" y="8" rx="2" />
+                        <path d="M2 14h2" />
+                        <path d="M20 14h2" />
+                        <path d="M15 13v2" />
+                        <path d="M9 13v2" />
+                      </svg>
+                    </div>
+                    <TypingIndicator />
+                  </div>
+                ) : null}
+              </div>
             </div>
 
-            {/* Auto-scroll to bottom when messages change */}
+            {/* ── Input area ── */}
+            <div className="border-t border-slate-200 bg-white/80 px-4 py-4 backdrop-blur-md sm:px-8 lg:px-16 xl:px-24">
+              <form onSubmit={handleSubmit} className="mx-auto max-w-3xl">
+                {/* Hidden file inputs */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif,image/webp"
+                  onChange={handleImageSelect}
+                  className="hidden"
+                  id="chat-image-upload"
+                />
+                <input
+                  ref={pdfInputRef}
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  onChange={handlePdfSelect}
+                  className="hidden"
+                  id="chat-pdf-upload"
+                />
 
+                {/* Attachment previews */}
+                {hasAttachments ? (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {imagePreview ? (
+                      <div className="group flex animate-chat-fade-in items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                        <img
+                          src={imagePreview}
+                          alt="Upload preview"
+                          className="h-10 w-10 rounded-lg border border-slate-200 object-cover"
+                        />
+                        <div className="flex flex-col">
+                          <p className="max-w-[140px] truncate text-xs font-medium text-slate-700">
+                            {selectedImage?.name}
+                          </p>
+                          <p className="text-[10px] text-slate-400">
+                            {selectedImage ? `${(selectedImage.size / 1024).toFixed(1)} KB` : ""}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={removeImage}
+                          className="ml-1 rounded-md p-1 text-slate-400 transition hover:bg-rose-50 hover:text-rose-500"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M18 6 6 18" />
+                            <path d="m6 6 12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ) : null}
 
-            <form onSubmit={handleSubmit} className="mt-6 grid gap-3">
-              {/* Hidden file input */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/gif,image/webp"
-                onChange={handleImageSelect}
-                className="hidden"
-                id="chat-image-upload"
-              />
-              <input
-                ref={pdfInputRef}
-                type="file"
-                accept=".pdf,application/pdf"
-                onChange={handlePdfSelect}
-                className="hidden"
-                id="chat-pdf-upload"
-              />
+                    {selectedPdf ? (
+                      <div className="group flex animate-chat-fade-in items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-rose-200 bg-rose-50">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-rose-500">
+                            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                            <polyline points="14 2 14 8 20 8" />
+                          </svg>
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="max-w-[140px] truncate text-xs font-medium text-slate-700">
+                            {selectedPdf.name}
+                          </p>
+                          <p className="text-[10px] text-slate-400">
+                            {(selectedPdf.size / 1024).toFixed(1)} KB
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={removePdf}
+                          className="ml-1 rounded-md p-1 text-slate-400 transition hover:bg-rose-50 hover:text-rose-500"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M18 6 6 18" />
+                            <path d="m6 6 12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
 
-              {/* Image preview */}
-              {imagePreview ? (
-                <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                  <img
-                    src={imagePreview}
-                    alt="Upload preview"
-                    className="h-20 w-20 rounded-xl border border-slate-200 object-cover"
+                {/* Input container */}
+                <div className="flex items-end gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm transition-shadow focus-within:border-indigo-300 focus-within:shadow-[0_0_0_3px_rgba(99,102,241,0.08)]">
+                  {/* Attachment buttons */}
+                  <div className="flex items-center gap-0.5 pb-1 pl-1">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={sending}
+                      className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+                      title="Attach image"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                        <circle cx="9" cy="9" r="2" />
+                        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => pdfInputRef.current?.click()}
+                      disabled={sending}
+                      className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+                      title="Attach PDF"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                        <polyline points="14 2 14 8 20 8" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* Textarea */}
+                  <textarea
+                    ref={textareaRef}
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    onKeyDown={handleKeyDown}
+                    rows={1}
+                    className="max-h-[200px] min-h-[44px] flex-1 resize-none bg-transparent px-2 py-2.5 text-sm text-slate-800 outline-none placeholder:text-slate-400"
+                    placeholder="Ask anything about your project..."
+                    disabled={sending}
                   />
-                  <div className="flex flex-col gap-1">
-                    <p className="text-sm font-medium text-slate-700 truncate max-w-[200px]">
-                      {selectedImage?.name}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      {selectedImage ? `${(selectedImage.size / 1024).toFixed(1)} KB` : ""}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={removeImage}
-                      className="mt-1 self-start rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-100"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              ) : null}
 
-              {/* PDF preview */}
-              {selectedPdf ? (
-                <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-rose-200 bg-rose-50">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-rose-500">
-                      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-                      <polyline points="14 2 14 8 20 8" />
-                      <path d="M10 13v-1h4v1" />
-                      <path d="M10 17v-1h4v1" />
-                    </svg>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <p className="text-sm font-medium text-slate-700 truncate max-w-[200px]">
-                      {selectedPdf.name}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      {(selectedPdf.size / 1024).toFixed(1)} KB
-                    </p>
-                    <button
-                      type="button"
-                      onClick={removePdf}
-                      className="mt-1 self-start rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-100"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
-              <textarea
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                className="min-h-32 rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-slate-400"
-                placeholder="Type your question here..."
-                disabled={sending}
-              />
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm text-slate-500">Messages are scoped to this project and conversation.</p>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={sending}
-                    className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    title="Attach image"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                      <circle cx="9" cy="9" r="2" />
-                      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-                    </svg>
-                    Image
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => pdfInputRef.current?.click()}
-                    disabled={sending}
-                    className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    title="Attach PDF"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-                      <polyline points="14 2 14 8 20 8" />
-                    </svg>
-                    PDF
-                  </button>
+                  {/* Send button */}
                   <button
                     type="submit"
-                    disabled={sending}
-                    className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                    disabled={sending || (!query.trim() && !hasAttachments)}
+                    className="mb-1 mr-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white shadow-sm transition hover:from-indigo-600 hover:to-violet-600 disabled:cursor-not-allowed disabled:from-slate-300 disabled:to-slate-300 disabled:shadow-none"
                   >
-                    {sending ? (selectedPdf ? "Processing PDF..." : "Sending...") : "Send"}
+                    {sending ? (
+                      <svg className="animate-spin" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                      </svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m5 12 7-7 7 7" />
+                        <path d="M12 19V5" />
+                      </svg>
+                    )}
                   </button>
                 </div>
-              </div>
-            </form>
-          </div>
-        </div>
 
-        <div className="space-y-6">
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">Project info</p>
-            <div className="mt-3 space-y-2 text-sm text-slate-600">
-              <div>
-                <span className="font-medium text-slate-900">Project:</span> {project?.name || "Loading..."}
-              </div>
-              <div>
-                <span className="font-medium text-slate-900">Conversation creator:</span>{" "}
-                {conversation?.creator?.email || "Unknown"}
-              </div>
-              <div>
-                <span className="font-medium text-slate-900">Creator role:</span>{" "}
-                {conversation?.creator?.role_name || "Unknown"}
-              </div>
+                <p className="mt-2 text-center text-[11px] text-slate-400">
+                  Press <kbd className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Enter</kbd> to send · <kbd className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Shift+Enter</kbd> for new line
+                </p>
+              </form>
             </div>
           </div>
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">RAG model</p>
-            <h3 className="mt-2 text-xl font-semibold">Planned flow</h3>
-            <ul className="mt-4 space-y-3 text-sm text-slate-600">
-              <li className="rounded-2xl border border-slate-200 px-4 py-3">1. User opens a conversation inside a project.</li>
-              <li className="rounded-2xl border border-slate-200 px-4 py-3">2. Messages will later go to the RAG pipeline.</li>
-              <li className="rounded-2xl border border-slate-200 px-4 py-3">3. For now, submission is intentionally inert.</li>
-            </ul>
-          </div>
+          {/* ── Sidebar (collapsible) ── */}
+          {sidebarOpen ? (
+            <aside className="animate-sidebar-slide w-80 shrink-0 border-l border-slate-200 bg-white/80 backdrop-blur-md overflow-y-auto">
+              <div className="p-5">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-400">Project info</h2>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarOpen(false)}
+                    className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 6 6 18" />
+                      <path d="m6 6 12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="mt-5 space-y-4">
+                  {/* Project card */}
+                  <div className="rounded-xl border border-slate-100 bg-gradient-to-br from-slate-50 to-white p-4">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-100 to-violet-100">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-slate-800">{project?.name || "Loading..."}</p>
+                        <p className="text-[11px] text-slate-400">Project</p>
+                      </div>
+                    </div>
+                    {project?.description ? (
+                      <p className="mt-3 text-xs leading-relaxed text-slate-500">{project.description}</p>
+                    ) : null}
+                  </div>
+
+                  {/* Conversation details */}
+                  <div className="rounded-xl border border-slate-100 bg-gradient-to-br from-slate-50 to-white p-4">
+                    <p className="mb-3 text-xs font-semibold uppercase tracking-[0.1em] text-slate-400">Conversation</p>
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-[11px] text-slate-400">Title</p>
+                        <p className="text-sm font-medium text-slate-700">{title}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-slate-400">Creator</p>
+                        <p className="text-sm font-medium text-slate-700">{conversation?.creator?.email || "Unknown"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-slate-400">Role</p>
+                        <p className="text-sm font-medium text-slate-700">{conversation?.creator?.role_name || "Unknown"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-slate-400">Conversation ID</p>
+                        <p className="font-mono text-[11px] text-slate-500 break-all">{conversationId}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* RAG info */}
+                  <div className="rounded-xl border border-slate-100 bg-gradient-to-br from-slate-50 to-white p-4">
+                    <p className="mb-3 text-xs font-semibold uppercase tracking-[0.1em] text-slate-400">RAG Pipeline</p>
+                    <div className="space-y-2">
+                      {["Query your project documents", "Image & PDF analysis", "Context-aware responses"].map((item) => (
+                        <div key={item} className="flex items-center gap-2">
+                          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          </div>
+                          <p className="text-xs text-slate-600">{item}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          ) : null}
         </div>
-      </div>
-    </section>
+      </section>
+    </>
   );
 }
