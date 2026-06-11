@@ -68,6 +68,40 @@ export type DocumentRow = {
   created_at?: string | null;
 };
 
+export type ChunkMetadataOriginalContent = {
+  raw_text: string;
+  tables_html: string[];
+  images_base64: string[];
+};
+
+export type ChunkMetadata = {
+  document_id: string;
+  chunk_index: number;
+  source: string | null;
+  page: number | null;
+  section_title: string | null;
+  section_type: string | null;
+  enhanced_content: string | null;
+  original_content: ChunkMetadataOriginalContent | null;
+};
+
+export type ChunkRow = {
+  chunk_id: string;
+  document_id: string;
+  content: string;
+  chunk_index: number;
+  token_count: number | null;
+  chunk_metadata: ChunkMetadata | null;
+  created_at: string | null;
+};
+
+export type DocumentChunksResponse = {
+  document_id: string;
+  file_name: string;
+  total_chunk: number;
+  chunks: ChunkRow[];
+};
+
 export type ModelOption = {
   value: string;
   label: string;

@@ -396,7 +396,11 @@ export default function ProjectDetailPage() {
         <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {documents.length > 0 ? (
             documents.map((document) => (
-              <article key={document.document_id} className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+              <article
+                key={document.document_id}
+                className="cursor-pointer rounded-2xl border border-slate-200 bg-slate-50 p-5 transition-all duration-200 hover:border-slate-400 hover:bg-white hover:shadow-md"
+                onClick={() => router.push(`/project/${projectId}/document/${document.document_id}`)}
+              >
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <h4 className="text-lg font-semibold tracking-tight text-slate-900">{document.file_name}</h4>
@@ -416,6 +420,14 @@ export default function ProjectDetailPage() {
                     <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Chunks</div>
                     <div className="mt-1 font-medium text-slate-900">{document.total_chunk}</div>
                   </div>
+                </div>
+
+                <div className="mt-3 flex items-center gap-1 text-xs text-slate-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  <span>Click to inspect chunks</span>
                 </div>
               </article>
             ))
