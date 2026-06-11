@@ -285,9 +285,8 @@ async def upload_document(
     db: db_dependency,
     project_id: UUID = Form(...),
     file: UploadFile = File(...),
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(get_current_user),
 ):
-    _ = current_user
     document = ingest_uploaded_pdf(
         db=db,
         upload_file=file,

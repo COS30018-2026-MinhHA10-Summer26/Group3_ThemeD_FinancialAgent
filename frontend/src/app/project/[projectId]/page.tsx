@@ -259,7 +259,7 @@ export default function ProjectDetailPage() {
 
   async function handleUploadDocument(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!projectId || !isAdmin || uploadingDocument) return;
+    if (!projectId || uploadingDocument) return;
 
     const token = localStorage.getItem("access_token") ?? (session as { backendToken?: string } | null)?.backendToken ?? "";
     if (!token) return;
@@ -367,31 +367,29 @@ export default function ProjectDetailPage() {
           </div>
         </div>
 
-        {isAdmin ? (
-          <form onSubmit={handleUploadDocument} className="mt-5 grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 lg:grid-cols-[1.5fr_auto] lg:items-end">
-            <label className="flex flex-col gap-2 text-sm font-medium text-slate-700">
-              Upload PDF
-              <input
-                ref={documentFileInputRef}
-                type="file"
-                accept="application/pdf,.pdf"
-                onChange={(event) => setSelectedDocumentFile(event.target.files?.[0] ?? null)}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none file:mr-4 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
-              />
-              <span className="text-xs text-slate-500">
-                {selectedDocumentFile ? selectedDocumentFile.name : "Select a PDF to ingest into this project."}
-              </span>
-            </label>
+        <form onSubmit={handleUploadDocument} className="mt-5 grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 lg:grid-cols-[1.5fr_auto] lg:items-end">
+          <label className="flex flex-col gap-2 text-sm font-medium text-slate-700">
+            Upload PDF
+            <input
+              ref={documentFileInputRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={(event) => setSelectedDocumentFile(event.target.files?.[0] ?? null)}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none file:mr-4 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
+            />
+            <span className="text-xs text-slate-500">
+              {selectedDocumentFile ? selectedDocumentFile.name : "Select a PDF to ingest into this project."}
+            </span>
+          </label>
 
-            <button
-              type="submit"
-              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
-              disabled={uploadingDocument}
-            >
-              {uploadingDocument ? "Uploading..." : "Upload document"}
-            </button>
-          </form>
-        ) : null}
+          <button
+            type="submit"
+            className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+            disabled={uploadingDocument}
+          >
+            {uploadingDocument ? "Uploading..." : "Upload document"}
+          </button>
+        </form>
 
         <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {documents.length > 0 ? (
