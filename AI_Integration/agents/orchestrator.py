@@ -32,7 +32,7 @@ import yaml
 from ai_integration.agent.state import AgentState, create_initial_state
 from ai_integration.ingestion.chunking import chunk_documents
 from ai_integration.tools.financial_tool import financial_tool
-from ai_integration.tools.official_report_tool import official_report_tool
+from ai_integration.tools.report_search_tool import official_report_tool
 from ai_integration.tools.report_tool import write_report
 from ai_integration.tools.web_search_tool import web_search_tool
 
@@ -268,57 +268,6 @@ def create_orchestrator():
         _append_step(state, "query_expanded")
         return state
 
-    def web_search_node(state: AgentState) -> AgentState:
-        metadata = state.setdefault("metadata", {})
-        official_result: dict[str, Any] | None = None
-
-        if _needs_official_report_search(state["cleaned_query"]):
-            official_result = official_report_tool(
-                state["cleaned_query"],
-                company_name=metadata.get("company_name") or _infer_company_name_from_query(state["cleaned_query"]),
-                company_website=metadata.get("company_website"),
-                years=metadata.get("target_years"),
-                dry_run=bool(metadata.get("dry_run_downloads", False)),
-                use_selenium=bool(metadata.get("use_selenium", False)),
-            )
-            state.setdefault("tool_calls", []).append({"tool": "official_report_tool"})
-            state.setdefault("tool_results", []).append(
-                {
-                    "tool": "official_report_tool",
-                    "downloaded_file_count": len(official_result.get("downloaded_files", [])),
-                    "matched_link_count": len(official_result.get("matched_links", [])),
-                    "dry_run": official_result.get("dry_run", False),
-                }
-            )
-
-        result = web_search_tool(
-            state["cleaned_query"],
-            search_queries=state.get("expanded_queries", []),
-            similarity_score=state.get("similarity_score", 0.0),
-        )
-        combined_documents = list(result.get("documents", []))
-        if official_result:
-            combined_documents = official_result.get("documents", []) + combined_documents
-
-        state["web_documents"] = [
-            _normalize_document(document) for document in combined_documents
-        ]
-        metadata["search_strategy"] = result.get("search_strategy", "")
-        metadata["search_prompts"] = result.get("prompts", [])
-        if official_result:
-            metadata["official_report_strategy"] = official_result.get("search_strategy", "")
-            metadata["downloaded_report_files"] = official_result.get("downloaded_files", [])
-        state.setdefault("tool_calls", []).append({"tool": "web_search_tool"})
-        state.setdefault("tool_results", []).append(
-            {
-                "tool": "web_search_tool",
-                "prompt_count": result.get("total_prompts", 0),
-                "document_count": len(state["web_documents"]),
-            }
-        )
-        _append_step(state, "web_search_completed")
-        return state
-    
     def report_search_node(state: AgentState) -> AgentState:
         metadata = state.setdefault("metadata", {})
         combined_documents = []

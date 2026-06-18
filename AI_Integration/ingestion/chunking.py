@@ -160,24 +160,85 @@ def _overlap_tail(units, overlap, max_length):
     return list(reversed(kept))
 
 
-def _units_for_document(doc):
+def _units_for_table(text, chunk_size, overlap):
+    lines = [_normalize_whitespace(l) for l in text.splitlines() if l.strip()]
+    if not lines:
+        return []
+
+    header = lines[0]        
+    data_rows = lines[1:]
+
+    chunks = []
+    current_rows = []
+    current_length = len(header)
+
+    for row in data_rows:
+        # +2 for the \n\n separator
+        if current_rows and current_length + len(row) + 2 > chunk_size - len(header) - 2:
+            chunks.append(header + "\n" + "\n".join(current_rows))
+            # overlap: carry last N rows into the next chunk
+            current_rows = current_rows[-overlap:] if overlap else []
+            current_length = len(header) + sum(len(r) + 1 for r in current_rows)
+
+        current_rows.append(row)
+        current_length += len(row) + 1
+
+    if current_rows:
+        chunks.append(header + "\n" + "\n".join(current_rows))
+
+    return chunks
+
+def _sentence_chunks(text, chunk_size, overlap):
+    sentences = _split_sentences(text)
+    chunks = []
+    start = 0
+
+    while start < len(sentences):
+        current_chunk = []
+        current_length = 0
+
+        for i in range(start, len(sentences)):
+            s = sentences[i]
+            if current_chunk and current_length + len(s) + 1 > chunk_size:
+                break
+            current_chunk.append(s)
+            current_length += len(s) + 1
+
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
+
+        # find how many sentences to step forward (chunk_size - overlap)
+        step_length = 0
+        step = 0
+        for s in current_chunk:
+            if step_length + len(s) >= max(chunk_size - overlap, 1):
+                break
+            step_length += len(s) + 1
+            step += 1
+
+        start += max(step, 1)  # always advance at least 1 sentence
+
+    return chunks
+
+def _units_for_document(doc, chunk_size=400, overlap=50):
     text = doc["text"].strip()
     section_type = (doc.get("section_type") or "body").strip().lower()
 
     if section_type == "table":
-        lines = []
-        for line in text.splitlines():
-            cleaned = _normalize_whitespace(line)
-            if cleaned:
-                lines.append(cleaned)
-        return lines or [_normalize_whitespace(text)]
+        # Returns pre-assembled chunks with header pinned — skip _chunk_units
+        return _units_for_table(text, chunk_size, overlap)
 
     paragraphs = _split_paragraphs(text)
-    if paragraphs:
-        return paragraphs
 
-    sentences = _split_sentences(text)
-    return sentences or [_normalize_whitespace(text)]
+    # If a single paragraph is large, split it by sentence with overlap
+    expanded = []
+    for para in paragraphs:
+        if len(para) > chunk_size:
+            expanded.extend(_sentence_chunks(para, chunk_size, overlap))
+        else:
+            expanded.append(para)
+
+    return expanded or _split_sentences(text) or [_normalize_whitespace(text)]
 
 
 def chunk_documents(documents, chunk_size, overlap):

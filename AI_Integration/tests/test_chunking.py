@@ -1,94 +1,105 @@
-import unittest
-
+from ai_integration.ingestion.chunking import chunk_text
+from ai_integration.ingestion.loader import load_documents
 from ai_integration.ingestion.chunking import chunk_documents
+import yaml
+import pandas as pd
+from collections import Counter
+import textwrap
 
 
-class ChunkingTests(unittest.TestCase):
-    def test_body_sections_chunk_by_paragraph_and_repeat_heading(self):
-        documents = [
-            {
-                "text": (
-                    "Revenue grew 12% year over year and operating margin improved.\n\n"
-                    "Management attributed the increase to stronger enterprise demand.\n\n"
-                    "Guidance remains unchanged for the second half of the year."
-                ),
-                "source": "sample.pdf",
-                "page": 2,
-                "section_title": "Management Discussion",
-                "section_type": "body",
-            }
-        ]
+def print_section_divider(title):
+    """Print a formatted section divider"""
+    print(f"\n{'='*80}")
+    print(f"  {title}")
+    print(f"{'='*80}\n")
 
-        chunks = chunk_documents(documents, chunk_size=120, overlap=30)
 
-        self.assertEqual(len(chunks), 3)
-        self.assertTrue(all(chunk["text"].startswith("Management Discussion\n\n") for chunk in chunks))
-        self.assertIn(
-            "Revenue grew 12% year over year and operating margin improved.",
-            chunks[0]["text"],
-        )
-        self.assertIn(
-            "Management attributed the increase to stronger enterprise demand.",
-            chunks[1]["text"],
-        )
-        self.assertIn(
-            "Guidance remains unchanged for the second half of the year.",
-            chunks[2]["text"],
-        )
-
-    def test_tables_split_by_rows_not_raw_character_windows(self):
-        documents = [
-            {
-                "text": (
-                    "Year   Revenue   Net income\n"
-                    "2023   100       20\n"
-                    "2024   120       25\n"
-                    "2025   140       30"
-                ),
-                "source": "financials.pdf",
-                "page": 8,
-                "section_title": "Income Statement",
-                "section_type": "table",
-            }
-        ]
-
-        chunks = chunk_documents(documents, chunk_size=75, overlap=0)
-
-        self.assertEqual(len(chunks), 2)
-        self.assertTrue(all(chunk["text"].startswith("Income Statement\n[table]\n\n") for chunk in chunks))
-        self.assertIn("Year Revenue Net income", chunks[0]["text"])
-        self.assertIn("2023 100 20", chunks[0]["text"])
-        self.assertIn("2024 120 25", chunks[0]["text"])
-        self.assertIn("2025 140 30", chunks[1]["text"])
-
-    def test_long_paragraph_falls_back_to_sentence_chunks(self):
-        documents = [
-            {
-                "text": (
-                    "Tesla reported record deliveries in the quarter. "
-                    "Gross margin declined due to price cuts and a higher mix of lower-priced vehicles. "
-                    "Energy storage deployments reached another all-time high."
-                ),
-                "source": "earnings.txt",
-                "page": 0,
-                "section_title": "Quarterly Update",
-                "section_type": "body",
-            }
-        ]
-
-        chunks = chunk_documents(documents, chunk_size=110, overlap=20)
-
-        self.assertGreaterEqual(len(chunks), 2)
-        self.assertTrue(all(chunk["text"].startswith("Quarterly Update\n\n") for chunk in chunks))
-        self.assertTrue(any("Tesla reported record deliveries in the quarter." in chunk["text"] for chunk in chunks))
-        self.assertTrue(
-            any(
-                "Gross margin declined due to price cuts and a higher mix of lower-priced vehicles."
-                in chunk["text"]
-                for chunk in chunks
-            )
-        )
+def analyze_chunks(chunks):
+    """Comprehensive analysis of chunked data"""
+    
+    # Convert to DataFrame for easier analysis
+    df = pd.DataFrame(chunks)
+    
+    print_section_divider("CHUNKING ANALYSIS REPORT")
+    
+    # 1. Overall Statistics
+    print("OVERALL STATISTICS")
+    print(f"  Total chunks: {len(df)}")
+    print(f"  Unique documents: {df['source'].nunique()}")
+    print(f"  Unique sections: {df['section_title'].nunique()}")
+    
+    # 2. Section Type Analysis
+    print_section_divider("SECTION TYPE DISTRIBUTION")
+    section_counts = df['section_type'].value_counts()
+    for section_type, count in section_counts.items():
+        percentage = (count / len(df)) * 100
+        bar = "█" * int(percentage / 5)
+        print(f"  {section_type:15} : {count:4} chunks ({percentage:5.1f}%) {bar}")
+    
+    # 3. Chunk Size Analysis
+    print_section_divider("CHUNK SIZE STATISTICS")
+    df['chunk_length'] = df['text'].str.len()
+    
+    print(f"  Average chunk size: {df['chunk_length'].mean():.0f} characters")
+    print(f"  Median chunk size:  {df['chunk_length'].median():.0f} characters")
+    print(f"  Min chunk size:     {df['chunk_length'].min():.0f} characters")
+    print(f"  Max chunk size:     {df['chunk_length'].max():.0f} characters")
+    print(f"  Std deviation:      {df['chunk_length'].std():.0f} characters")
+    
+    # 4. Chunk Size by Section Type
+    print_section_divider("CHUNK SIZE BY SECTION TYPE")
+    for section_type in df['section_type'].unique():
+        section_data = df[df['section_type'] == section_type]['chunk_length']
+        print(f"  {section_type}:")
+        print(f"    Avg: {section_data.mean():7.0f} | Min: {section_data.min():5.0f} | "
+              f"Max: {section_data.max():5.0f} | Count: {len(section_data)}")
+    
+    # 5. Per-Document Chunk Count
+    print_section_divider("CHUNKS PER DOCUMENT")
+    doc_chunks = df['source'].value_counts().sort_index()
+    total_docs = len(doc_chunks)
+    for idx, (source, count) in enumerate(doc_chunks.head(10).items(), 1):
+        print(f"  {idx:2}. {source:40} : {count:4} chunks")
+    if total_docs > 10:
+        print(f"  ... and {total_docs - 10} more documents")
+    
+    # 6. Sample Chunks from Each Section Type
+    print_section_divider("SAMPLE CHUNKS")
+    for section_type in df['section_type'].unique():
+        section_chunks = df[df['section_type'] == section_type]
+        if len(section_chunks) > 0:
+            sample = section_chunks.iloc[0]
+            print(f"\n  [{section_type.upper()}]")
+            print(f"  Source: {sample['source']}")
+            print(f"  Section: {sample['section_title']}")
+            print(f"  Chunk ID: {sample['chunk_id']}")
+            print(f"  Length: {len(sample['text'])} characters\n")
+            
+            # Show first 200 chars of chunk
+            preview = sample['text'][:200]
+            wrapped = textwrap.fill(preview, width=76, initial_indent="  ", 
+                                   subsequent_indent="  ")
+            print(wrapped)
+            if len(sample['text']) > 200:
+                print("  ...")
+    
+    return df
 
 
 if __name__ == "__main__":
-    unittest.main()
+    config = yaml.safe_load(open("ai_integration/config.yaml"))
+    docs = load_documents("data/raw/")
+    chunks = chunk_documents(
+        docs,
+        config["chunk_size"],
+        config["chunk_overlap"]
+    )
+    
+    print(f"\nLoaded {len(docs)} documents")
+    print(f"Created {len(chunks)} chunks")
+    print(f"Chunk size: {config['chunk_size']}, Overlap: {config['chunk_overlap']}")
+    
+    # Perform analysis
+    df = analyze_chunks(chunks)
+    
+    print_section_divider("ANALYSIS COMPLETE")

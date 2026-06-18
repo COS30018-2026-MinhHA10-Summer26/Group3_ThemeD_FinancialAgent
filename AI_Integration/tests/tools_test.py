@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ai_integration.tools.financial_tool import financial_tool
-from ai_integration.tools.official_report_tool import official_report_tool
+from ai_integration.tools.report_search_tool import official_report_tool
 from ai_integration.tools.report_tool import write_report
 from ai_integration.tools.web_search_tool import web_search_tool
 

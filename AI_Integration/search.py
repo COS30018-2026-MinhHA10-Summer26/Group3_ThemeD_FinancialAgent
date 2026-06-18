@@ -20,7 +20,7 @@ for result in data.get("organic_results", []):
     try: 
         pdf_response = requests.get(result["link"])
         pdf_response.raise_for_status()
-        with open("ai_integration/data/raw/temp.pdf", "wb") as f:
+        with open(f"ai_integration/data/raw/{query}_{result['title']}.pdf", "wb") as f:
             f.write(pdf_response.content)
 
         print("Successfully extracted text from PDF.")
