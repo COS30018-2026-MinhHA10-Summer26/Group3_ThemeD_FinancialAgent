@@ -221,6 +221,9 @@ class CriticAgent:
                     "content": (
                         "You are reviewing your own Critic Agent output before it is sent. "
                         "Revise the critique so it fully satisfies the quality checklist. "
+                        "Make sure to keep all required Markdown sections: Overall Verdict, Major Logic Gaps, "
+                        "Unsupported or Weakly Supported Claims, Missing Investor Risks, Figure and Visualization Issues, "
+                        "Competitor Counterarguments, Revision Priorities, and Issues to Resolve (which must be a checklist using '- [ ]'). "
                         "Keep the answer in English Markdown. Do not invent facts outside the provided context. "
                         "Be direct, investor-minded, and competitor-minded."
                     ),
@@ -264,7 +267,10 @@ class CriticAgent:
             "- Focus on logic gaps, unsupported claims, missing risks, and weak recommendations.\n"
             "- Do not rewrite the advisor report. Give feedback that helps the advisor revise it.\n"
             "- Distinguish between 'not supported by context' and 'likely false'.\n"
-            "- Return the critique in English Markdown.\n\n"
+            "- Return the critique in English Markdown.\n"
+            "- Provide a final section '## Issues to Resolve' consisting of a checklist of short, actionable bullet points "
+            "(using the markdown checkbox format: '- [ ] [Brief description of the error or issue to resolve]') summarizing "
+            "all major errors and gaps identified in the advisor report. This checklist will be used to track if they have been resolved later.\n\n"
             "Required Markdown sections:\n"
             "## Overall Verdict\n"
             "## Major Logic Gaps\n"
@@ -273,6 +279,7 @@ class CriticAgent:
             "## Figure and Visualization Issues\n"
             "## Competitor Counterarguments\n"
             "## Revision Priorities\n"
+            "## Issues to Resolve\n"
         )
 
         messages = [

@@ -167,6 +167,7 @@ def critique_quality_tool(critique_markdown: str) -> Dict[str, Any]:
         "has_actionable_revision": any(term in text for term in ["revise", "revision", "recommend", "should"]),
         "mentions_evidence": any(term in text for term in ["source", "context", "document", "evidence", "citation"]),
         "has_figure_audit": any(term in text for term in ["figure", "visualization", "chart", "image"]),
+        "has_issues_to_resolve": "issues to resolve" in text and "- [ ]" in text,
     }
 
     missing_items = [name for name, passed in checklist.items() if not passed]
