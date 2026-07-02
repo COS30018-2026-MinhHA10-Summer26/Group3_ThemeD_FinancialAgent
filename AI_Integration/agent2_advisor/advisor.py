@@ -26,7 +26,7 @@ class AdvisorAgent:
     Utilizes OpenAI's ChatCompletion API with native Tool calling.
     """
     
-    def __init__(self, model: str = "gpt-4o-mini", max_tool_loops: int = 5, max_self_review_loops: int = 2):
+    def __init__(self, model: str = "gpt-4o-mini", max_tool_loops: int = 15, max_self_review_loops: int = 2):
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(f"OPENAI_API_KEY not found in env. Checked path: {ENV_PATH}")
