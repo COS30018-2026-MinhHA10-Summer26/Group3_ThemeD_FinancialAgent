@@ -23,6 +23,49 @@ load_dotenv(PROJECT_ROOT / ".env")
 load_dotenv(PROJECT_ROOT / "backend" / ".env")
 
 
+def _parse_numeric_value(val: Any) -> float:
+    """Helper to robustly parse a numeric value from float, int, or string containing currency, commas, or suffixes."""
+    if isinstance(val, (int, float)):
+        return float(val)
+    if not val:
+        return 0.0
+    
+    # Convert to string and clean
+    s = str(val).strip()
+    
+    # Remove currency symbols, commas, spaces
+    s = re.sub(r'[$,\s]', '', s)
+    
+    # Remove trailing M, B, K, m, b, k or words if they are suffixes
+    # e.g., "81462M" -> "81462", "81462 million" -> "81462"
+    s = re.sub(r'(?i)(million|billion|thousand|m|b|k)$', '', s)
+    
+    # Check for percentage
+    is_percent = False
+    if s.endswith('%'):
+        is_percent = True
+        s = s[:-1]
+        
+    try:
+        num = float(s)
+        if is_percent:
+            num /= 100.0
+        return num
+    except ValueError:
+        # Fallback: extract first numeric-looking substring
+        match = re.search(r'[-+]?\d*\.?\d+', s)
+        if match:
+            try:
+                num = float(match.group())
+                if is_percent:
+                    num /= 100.0
+                return num
+            except ValueError:
+                pass
+        return 0.0
+
+
+
 def _normalize_supabase_url(raw_url: str) -> str:
     url = (raw_url or "").rstrip("/")
     if url.endswith("/rest/v1"):
@@ -153,13 +196,13 @@ def _render_chart_png(
 
     if figure_type == "line_chart":
         for y_key in y_keys:
-            y_values = [float(row.get(y_key, 0) or 0) for row in rows]
+            y_values = [_parse_numeric_value(row.get(y_key, 0)) for row in rows]
             ax.plot(x_values, y_values, marker="o", linewidth=2, label=y_key)
     else:
         width = 0.8 / max(len(y_keys), 1)
         x_positions = list(range(len(x_values)))
         for index, y_key in enumerate(y_keys):
-            y_values = [float(row.get(y_key, 0) or 0) for row in rows]
+            y_values = [_parse_numeric_value(row.get(y_key, 0)) for row in rows]
             offsets = [position + (index - (len(y_keys) - 1) / 2) * width for position in x_positions]
             ax.bar(offsets, y_values, width=width, label=y_key)
         ax.set_xticks(x_positions)
@@ -249,17 +292,18 @@ def risk_assessment_tool(financial_metrics: Dict[str, float]) -> Dict[str, Any]:
         - total_debt (optional)
         - equity (optional, book value)
     """
+    metrics_cleaned = {k: _parse_numeric_value(v) for k, v in financial_metrics.items()}
     results: Dict[str, Any] = {}
     
     # 1. Altman Z-Score Calculation (for public manufacturing companies)
     # Z = 1.2*X1 + 1.4*X2 + 3.3*X3 + 0.6*X4 + 0.99*X5
-    wc = financial_metrics.get("working_capital")
-    assets = financial_metrics.get("total_assets")
-    re_earnings = financial_metrics.get("retained_earnings")
-    ebit = financial_metrics.get("ebit")
-    market_cap = financial_metrics.get("market_cap")
-    liabilities = financial_metrics.get("total_liabilities")
-    sales = financial_metrics.get("sales")
+    wc = metrics_cleaned.get("working_capital")
+    assets = metrics_cleaned.get("total_assets")
+    re_earnings = metrics_cleaned.get("retained_earnings")
+    ebit = metrics_cleaned.get("ebit")
+    market_cap = metrics_cleaned.get("market_cap")
+    liabilities = metrics_cleaned.get("total_liabilities")
+    sales = metrics_cleaned.get("sales")
     
     if all(x is not None for x in [wc, assets, re_earnings, ebit, market_cap, liabilities, sales]) and assets > 0 and liabilities > 0:
         x1 = wc / assets
@@ -290,8 +334,8 @@ def risk_assessment_tool(financial_metrics: Dict[str, float]) -> Dict[str, Any]:
         results["altman_z_score"] = "Insufficient data to compute Altman Z-Score."
         
     # 2. Debt-to-Equity Ratio
-    debt = financial_metrics.get("total_debt")
-    equity = financial_metrics.get("equity")
+    debt = metrics_cleaned.get("total_debt")
+    equity = metrics_cleaned.get("equity")
     if debt is not None and equity is not None and equity > 0:
         de_ratio = debt / equity
         results["debt_to_equity"] = round(de_ratio, 4)
@@ -301,7 +345,7 @@ def risk_assessment_tool(financial_metrics: Dict[str, float]) -> Dict[str, Any]:
         results["liabilities_to_market_cap"] = round(de_ratio_market, 4)
         
     # 3. Interest Coverage Ratio
-    interest = financial_metrics.get("interest_expense")
+    interest = metrics_cleaned.get("interest_expense")
     if ebit is not None and interest is not None and interest > 0:
         coverage = ebit / interest
         results["interest_coverage_ratio"] = round(coverage, 2)
@@ -325,6 +369,15 @@ def financial_calculator_tool(
     - ROI (Return on Investment)
     - CAGR (Compound Annual Growth Rate)
     """
+    fixed_costs = _parse_numeric_value(fixed_costs)
+    price_per_unit = _parse_numeric_value(price_per_unit)
+    variable_cost_per_unit = _parse_numeric_value(variable_cost_per_unit)
+    initial_investment = _parse_numeric_value(initial_investment)
+    net_profit = _parse_numeric_value(net_profit)
+    beginning_value = _parse_numeric_value(beginning_value)
+    ending_value = _parse_numeric_value(ending_value)
+    years = _parse_numeric_value(years)
+    
     results: Dict[str, Any] = {}
     
     # 1. Break-even calculation

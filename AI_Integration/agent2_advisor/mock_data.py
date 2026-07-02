@@ -6,7 +6,6 @@ Provides real numbers extracted from the official Form 10-K.
 USER_QUERY = (
     "Please give some advice of Tesla's financial health and future outlook,"
     "based on the attached financial statements."
-    "include a chart comparing key financial metrics."
 )
 
 MOCK_CONTEXT_DOCS = [

@@ -12,7 +12,7 @@ from ai_integration.agent2_advisor.mock_data import MOCK_CONTEXT_DOCS, USER_QUER
 
 MOCK_RAG_RESPONSE = """\
 Query: Please give some advice of Tesla's financial health and future outlook, \
-based on the attached financial statements. Include a chart comparing key financial metrics.
+based on the attached financial statements
 
 Retrieval confidence: 0.72
 Web augmentation used: no
