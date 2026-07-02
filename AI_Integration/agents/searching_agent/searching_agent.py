@@ -1,4 +1,4 @@
-
+from ai_integration.tools.search_assess_tool import calculate_coverage
 
 SKILL_PATH = "ai_integration/agent/searching_agent/SKILL.md"
 with open(SKILL_PATH, "r") as f:
@@ -39,7 +39,8 @@ class SearchingAgent:
                 user_query,
                 documents
             )
-            coverage = self.calculate_coverage(user_query,documents,missing_info)
+            query = f"User Query: {user_query}\n\nThe identified missing information is: {missing_info}"
+            coverage = calculate_coverage(query,documents)
             if coverage >= self.coverage_threshold:
                 break
             queries = self.generate_search_queries(user_query,documents,missing_info)
