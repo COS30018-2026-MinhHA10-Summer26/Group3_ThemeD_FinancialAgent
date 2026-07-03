@@ -65,7 +65,7 @@ def main():
         agent = AdvisorAgent(model="gpt-4o-mini")
 
         # Run the Agent for each mock data file
-        for index in range(1, 21):
+        for index in range(20, 21):
             mock_module = load_mock_data_module(index)
 
             user_query = mock_module.USER_QUERY
