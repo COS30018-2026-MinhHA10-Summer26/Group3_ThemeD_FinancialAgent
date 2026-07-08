@@ -206,10 +206,8 @@ The search tool retrieves:
 - recent company updates.
 
 Possible APIs:
-- Tavily
 - SerpAPI
-- DuckDuckGo Search
-- Financial news APIs
+
 
 ---
 

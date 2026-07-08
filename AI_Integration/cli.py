@@ -10,8 +10,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from ai_integration.agent.orchestrator import run_agent_state
-from ai_integration.ingestion.loader import load_documents
+from ai_integration.agent1_planner.orchestrator import run_agent_state
 
 
 DEFAULT_RAW_DIR = Path(__file__).resolve().parents[1] / "data" / "raw"
@@ -111,11 +110,14 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
         return 0
 
-    final_output = result.get("report") if result.get("report_requested") and result.get("report") else result.get("response", "")
+    final_output = result.get("final_output", "")
     print(final_output)
 
     if args.show_state:
         print("\n---")
+        print("route:", result.get("route"))
+        print("classification_reason:", result.get("classification_reason"))
+        print("executed_agents:", json.dumps(result.get("executed_agents", []), ensure_ascii=False))
         print("workflow_steps:", ", ".join(result.get("workflow_steps", [])))
         print("tool_calls:", json.dumps(result.get("tool_calls", []), ensure_ascii=False))
         print("errors:", json.dumps(result.get("errors", []), ensure_ascii=False))
@@ -162,7 +164,7 @@ def _build_memory(args: argparse.Namespace) -> dict[str, Any]:
 
     if args.load_raw_docs:
         raw_dir = Path(args.raw_dir)
-        memory["documents"] = load_documents(str(raw_dir)) if raw_dir.exists() else []
+        memory["documents"] = _load_documents(str(raw_dir)) if raw_dir.exists() else []
 
     metadata = dict(memory.get("metadata", {}))
     if args.company_name:
@@ -179,6 +181,11 @@ def _build_memory(args: argparse.Namespace) -> dict[str, Any]:
         memory["metadata"] = metadata
 
     return memory
+
+
+def _load_documents(folder: str) -> list[dict[str, Any]]:
+    module = __import__("ai_integration.ingestion.loader", fromlist=["load_documents"])
+    return module.load_documents(folder)
 
 
 if __name__ == "__main__":
