@@ -19,6 +19,7 @@ import yaml
 
 from ai_integration.agent1_planner.answer_agent import AnswerAgent
 from ai_integration.agent1_planner.retrieval_agent import RetrievalAgent
+from ai_integration.memory.session_memory import ShortTermMemory
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -99,10 +100,20 @@ class PlanningOrchestrator:
         plan = self.plan_query(cleaned_query, decision)
         workflow_steps.append("planned_workflow")
 
+        # Initialise per-request shared memory
+        shared_memory = ShortTermMemory()
+        route = plan.get("route", decision["route"])
+        shared_memory.set_context(
+            query=cleaned_query,
+            route=route,
+            metadata=metadata,
+            plan=plan,
+        )
+
         state: dict[str, Any] = {
             "query": query,
             "cleaned_query": cleaned_query,
-            "route": plan.get("route", decision["route"]),
+            "route": route,
             "classification_reason": decision["reason"],
             "classification_confidence": decision["confidence"],
             "messages": [{"role": "user", "content": cleaned_query}],
@@ -121,10 +132,12 @@ class PlanningOrchestrator:
             "response": "",
             "report": None,
             "artifacts": {},
+            "shared_memory": shared_memory,
         }
 
         self._execute_plan(state, memory)
         workflow_steps.append("completed")
+        state["shared_memory_snapshot"] = shared_memory.snapshot()
         return state
 
     def classify_query(self, query: str) -> dict[str, Any]:
@@ -252,6 +265,10 @@ class PlanningOrchestrator:
         state["errors"].extend(result.get("errors", []))
         state["metadata"].update(result.get("metadata", {}))
 
+        # Sync to shared memory
+        shared_memory: ShortTermMemory = state["shared_memory"]
+        shared_memory.set_retrieval_docs(state["context_docs"])
+
     def _run_search_agent(self, state: dict[str, Any]) -> None:
         search_docs = self._search_for_context(state["cleaned_query"])
         merged_docs = self._deduplicate_documents(state.get("context_docs", []) + search_docs)
@@ -264,6 +281,10 @@ class PlanningOrchestrator:
         state["metadata"]["coverage_score"] = state["coverage_score"]
         state["workflow_steps"].append("searched_external_context")
 
+        # Sync to shared memory
+        shared_memory: ShortTermMemory = state["shared_memory"]
+        shared_memory.append_retrieval_docs(search_docs)
+
     def _run_answer_agent(self, state: dict[str, Any]) -> None:
         agent = self._build_answer_agent()
         response = agent.run(state["cleaned_query"], state.get("context_docs", []), state.get("metadata", {}))
@@ -274,7 +295,13 @@ class PlanningOrchestrator:
         state["tool_results"].append({"tool": "AnswerAgent", "status": "completed"})
 
     def _run_advisor_agent(self, state: dict[str, Any]) -> None:
-        result = self._run_deep_advice(state["cleaned_query"], state.get("context_docs", []), state.get("metadata", {}))
+        shared_memory: ShortTermMemory = state["shared_memory"]
+        result = self._run_deep_advice(
+            state["cleaned_query"],
+            state.get("context_docs", []),
+            state.get("metadata", {}),
+            shared_memory,
+        )
         state["tool_calls"].extend(result["tool_calls"])
         state["tool_results"].extend(result["tool_results"])
         state["workflow_steps"].extend(result["workflow_steps"])
@@ -311,6 +338,7 @@ class PlanningOrchestrator:
         query: str,
         context_docs: list[dict[str, Any]],
         metadata: dict[str, Any],
+        shared_memory: ShortTermMemory,
     ) -> dict[str, Any]:
         workflow_steps: list[str] = []
         tool_calls: list[dict[str, Any]] = []
@@ -339,6 +367,7 @@ class PlanningOrchestrator:
                 "final_output": final_output,
             }
 
+        # --- Advisor (v1) ---
         try:
             advisor = advisor_cls()
             advisor_report = advisor.run(query, context_docs)
@@ -346,6 +375,7 @@ class PlanningOrchestrator:
             tool_calls.append({"tool": "AdvisorAgent"})
             tool_results.append({"tool": "AdvisorAgent", "status": "completed"})
             artifacts["advisor_report"] = advisor_report
+            shared_memory.set_advisor_report(advisor_report, version_label="v1")
         except Exception as exc:
             errors.append(f"advisor_agent_error: {exc}")
             final_output = self._deep_advice_fallback(query, context_docs)
@@ -359,6 +389,7 @@ class PlanningOrchestrator:
                 "final_output": final_output,
             }
 
+        # --- Critic ---
         if critic_cls is not None:
             try:
                 critic = critic_cls()
@@ -367,13 +398,27 @@ class PlanningOrchestrator:
                 tool_calls.append({"tool": "CriticAgent"})
                 tool_results.append({"tool": "CriticAgent", "status": "completed"})
                 artifacts["critic_report"] = critic_report
+                shared_memory.set_critic_argument(
+                    critique=critic_report,
+                    issues=self._extract_issues_from_critique(critic_report),
+                )
             except Exception as exc:
                 errors.append(f"critic_agent_error: {exc}")
 
+        # --- Evaluator (reads from shared memory) ---
         if evaluator_cls is not None:
             try:
                 evaluator = evaluator_cls()
-                evaluator_report = evaluator.run(query, context_docs, response=advisor_report)
+                critic_arg = shared_memory.get_critic_argument()
+                advisor_latest = shared_memory.get_advisor_report()  # latest version
+                advisor_v1 = shared_memory.get_advisor_report("v1")
+                evaluator_report = evaluator.run(
+                    query,
+                    context_docs,
+                    response=advisor_v1 or advisor_report,
+                    critic_issues=critic_arg.get("critique"),
+                    advisor_report_v2=advisor_latest if advisor_latest != advisor_v1 else None,
+                )
                 workflow_steps.append("evaluator_completed")
                 tool_calls.append({"tool": "EvaluatorAgent"})
                 tool_results.append({"tool": "EvaluatorAgent", "status": "completed"})
@@ -390,6 +435,18 @@ class PlanningOrchestrator:
             "advisor_report": advisor_report,
             "final_output": advisor_report or self._deep_advice_fallback(query, context_docs),
         }
+
+    @staticmethod
+    def _extract_issues_from_critique(critique: str) -> list[str]:
+        """Extract ``- [ ] ...`` checklist items from a Critic Markdown report."""
+        issues: list[str] = []
+        for line in critique.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("- [ ]"):
+                issue_text = stripped[len("- [ ]"):].strip()
+                if issue_text:
+                    issues.append(issue_text)
+        return issues
 
     def _deep_advice_fallback(self, query: str, context_docs: list[dict[str, Any]]) -> str:
         lines = [

@@ -53,7 +53,7 @@ class StubPlanner(PlanningOrchestrator):
                 return "stub answer output"
         return StubAnswerAgent()
 
-    def _run_deep_advice(self, query, context_docs, metadata):
+    def _run_deep_advice(self, query, context_docs, metadata, shared_memory):
         return {
             "workflow_steps": ["stub_deep_advice"],
             "tool_calls": [{"tool": "StubAdvisor"}],
