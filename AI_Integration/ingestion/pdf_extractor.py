@@ -2,86 +2,99 @@ import re
 from io import BytesIO
 import pdfplumber
 from pypdf import PdfReader
+import fitz
 
+def _build_header_from_multirow(data):
+    """
+    Detects and merges multi-row headers by propagating non-empty cells
+    downward (simulating colspan/rowspan) and combining row levels with ' > '.
+    Stops when a row looks like data (contains numbers).
+    """
+    header_rows = []
+    data_start = 0
 
-HEADING_RE = re.compile(r"^(\d+(\.\d+)*)[\s.)-]+[A-Z].*")
+    for i, row in enumerate(data):
+        # A row is a data row if >50% of cells contain digits
+        numeric_cells = sum(
+            1 for cell in row
+            if cell and re.search(r"\d", str(cell))
+        )
+        non_empty = sum(1 for cell in row if cell and str(cell).strip())
+        is_data_row = non_empty > 0 and numeric_cells / max(non_empty, 1) > 0.5
 
+        if is_data_row and header_rows:
+            data_start = i
+            break
+        header_rows.append([str(cell or "").strip() for cell in row])
+    else:
+        # All rows were headers (shouldn't happen), treat first row as only header
+        if not data_start:
+            return [" | ".join(str(c or "") for c in data[0])], 1
 
-# def _extract_page_text(page):
-#     try:
-#         text = page.extract_text(extraction_mode="layout")
-#     except TypeError:
-#         text = page.extract_text()
+    if not header_rows:
+        return [" | ".join(str(c or "") for c in data[0])], 1
 
-#     return text or ""
+    # Forward-fill empty cells horizontally within each header row
+    # (handles colspan: "Three Months Ended | | | Twelve Months Ended | |")
+    filled_rows = []
+    for row in header_rows:
+        filled = []
+        last = ""
+        for cell in row:
+            if cell:
+                last = cell
+                filled.append(cell)
+            else:
+                filled.append(last)  # propagate left neighbor into empty cell
+        filled_rows.append(filled)
 
+    # Combine header levels per column: "Three Months Ended > Sep 27, 2025"
+    num_cols = max(len(row) for row in filled_rows)
+    combined_cols = []
+    for col_idx in range(num_cols):
+        parts = []
+        seen = set()
+        for row in filled_rows:
+            cell = row[col_idx] if col_idx < len(row) else ""
+            # Deduplicate repeated labels across rows
+            if cell and cell not in seen:
+                parts.append(cell)
+                seen.add(cell)
+        combined_cols.append(" > ".join(parts) if parts else "")
 
-# def _normalize_block(block):
-#     lines = [line.rstrip() for line in block.splitlines()]
-#     cleaned = [line for line in lines if line.strip()]
-#     return "\n".join(cleaned).strip()
+    header_line = " | ".join(combined_cols)
+    return [header_line], data_start
 
+def _extract_table_section(table, source, page_number, table_idx):
+    data = table.extract()
+    if not data:
+        return None
 
-# def _is_heading(block):
-#     if "\n" in block:
-#         return False
+    # Replace nulls with empty strings throughout
+    data = [
+        [str(cell or "").strip() for cell in row]
+        for row in data
+    ]
 
-#     line = block.strip()
-#     if not line or len(line) > 120:
-#         return False
+    # Build merged header, get index where data rows start
+    header_lines, data_start = _build_header_from_multirow(data)
 
-#     if HEADING_RE.match(line):
-#         return True
+    # Format data rows using the resolved column count
+    rows = []
+    for row in data[data_start:]:
+        if not any(cell.strip() for cell in row):
+            continue  # skip blank rows
+        rows.append(" | ".join(row))
 
-#     words = line.split()
-#     if not words or len(words) > 12:
-#         return False
+    table_text = "\n".join(header_lines + rows)
 
-#     uppercase_ratio = sum(1 for char in line if char.isupper()) / max(sum(1 for char in line if char.isalpha()), 1)
-#     titlecase_words = sum(1 for word in words if word[:1].isupper())
-
-#     return uppercase_ratio > 0.7 or titlecase_words / len(words) > 0.8
-
-
-# def _is_table_block(block):
-#     lines = [line for line in block.splitlines() if line.strip()]
-#     if len(lines) < 2:
-#         return False
-
-#     multi_space_lines = sum(1 for line in lines if re.search(r"\S\s{2,}\S", line))
-#     numeric_lines = sum(1 for line in lines if re.search(r"\d", line))
-#     pipe_lines = sum(1 for line in lines if "|" in line)
-#     dash_border = sum(1 for line in lines if re.match(r"^[-|+\s]+$", line))
-#     if pipe_lines >= len(lines) * 0.5:
-#         return True
-#     if multi_space_lines >= max(1, len(lines) // 3):
-#         return True  
-#     if dash_border >= 1 and len(lines) >= 3:
-#         return True
-
-#     return False
-
-
-# def _section_type_from_heading(heading):
-#     normalized = heading.lower()
-
-#     if "conclusion" in normalized or "summary" in normalized:
-#         return "conclusion"
-#     if "table" in normalized or "schedule" in normalized:
-#         return "table"
-
-#     return "body"
-
-
-# def _table_title(block, fallback_heading=None):
-#     first_line = next((line.strip() for line in block.splitlines() if line.strip()), "")
-
-#     if first_line and len(first_line) <= 140:
-#         return first_line
-
-#     return fallback_heading or "Table"
-
-
+    return {
+        "text": table_text,
+        "source": source,
+        "page": page_number,
+        "section_title": f"table_{table_idx}",
+        "section_type": "table",
+    }
 def _make_section(text, source, page, section_title=None, section_type="body"):
     paragraphs = []
     for block in re.split(r"\n\s*\n", text):
@@ -102,125 +115,6 @@ def _make_section(text, source, page, section_title=None, section_type="body"):
         "section_type": section_type,
     }
 
-
-# def extract_sections_from_pdf(pdf_bytes, source):
-#     reader = PdfReader(BytesIO(pdf_bytes))
-#     sections = []
-#     current_heading = None
-#     current_type = "body"
-#     buffered_paragraphs = []
-#     buffer_page = 0
-
-#     def flush_buffer():
-#         nonlocal buffered_paragraphs, buffer_page
-
-#         if not buffered_paragraphs:
-#             return
-
-#         merged = "\n\n".join(buffered_paragraphs)
-#         section = _make_section(
-#             merged,
-#             source=source,
-#             page=buffer_page,
-#             section_title=current_heading,
-#             section_type=current_type,
-#         )
-#         if section:
-#             sections.append(section)
-#         buffered_paragraphs = []
-
-#     for page_number, page in enumerate(reader.pages):
-#         page_text = _extract_page_text(page)
-#         if not page_text.strip():
-#             continue
-
-#         blocks = [_normalize_block(block) for block in re.split(r"\n\s*\n", page_text)]
-#         blocks = [block for block in blocks if block]
-
-#         for block in blocks:
-#             if _is_heading(block):
-#                 flush_buffer()
-#                 current_heading = block
-#                 current_type = _section_type_from_heading(block)
-#                 buffer_page = page_number
-#                 continue
-
-#             if _is_table_block(block) or current_type == "table": 
-#                 flush_buffer()
-#                 table_title = _table_title(block, current_heading)
-#                 section = _make_section(
-#                     block,
-#                     source=source,
-#                     page=page_number,
-#                     section_title=table_title,
-#                     section_type="table",
-#                 )
-#                 if section:
-#                     sections.append(section)
-#                 continue
-
-#             if not buffered_paragraphs:
-#                 buffer_page = page_number
-#             buffered_paragraphs.append(block)
-
-#     flush_buffer()
-#     return sections
-
-
-# def extract_sections_from_text(text, source):
-#     section = _make_section(text, source=source, page=0)
-#     return [section] if section else []
-
-# def extract_sections_from_pdf(source):
-#     sections = []
-
-#     with pdfplumber.open(source) as pdf:
-#         for page_number, page in enumerate(pdf.pages):
-
-#             for table in page.extract_tables():
-#                 if not table:
-#                     continue
-#                 header = " | ".join(cell or "" for cell in table[0])
-#                 rows = [
-#                     " | ".join(cell or "" for cell in row)
-#                     for row in table[1:]
-#                 ]
-#                 text = header + "\n" + "\n".join(rows)
-#                 sections.append({
-#                     "text": text,
-#                     "source": source,
-#                     "page": page_number,
-#                     "section_title": header[:80],
-#                     "section_type": "table",  
-#                 })
-
-#             # Extract non-table text for body sections
-#             text_outside_tables = page.filter(
-#                 lambda obj: obj["object_type"] == "char"
-#                 and not any(
-#                     obj["x0"] >= t.bbox[0] and obj["x1"] <= t.bbox[2]
-#                     and obj["top"] >= t.bbox[1] and obj["bottom"] <= t.bbox[3]
-#                     for t in page.find_tables()
-#                 )
-#             ).extract_text()
-
-#             if text_outside_tables and text_outside_tables.strip():
-#                 section = _make_section(
-#                     text_outside_tables, source=source,
-#                     page=page_number, section_type="body"
-#                 )
-#                 if section:
-#                     sections.append(section)
-
-#     return sections
-
-
-
-
-import fitz
-import re
-
-
 def extract_sections_from_pdf(source):
     doc = fitz.open(source)
     sections = []
@@ -231,33 +125,9 @@ def extract_sections_from_pdf(source):
         try:
             tables = page.find_tables()
             for table_idx, table in enumerate(tables.tables):
-                data = table.extract()
-                if not data:
-                    continue
-                header = " | ".join(str(cell or "") for cell in data[0])
-                rows = [
-                    " | ".join(
-                        str(cell or "")
-                        for cell in row
-                    )
-                    for row in data[1:]
-                ]
-
-                table_text = (
-                    header +
-                    "\n" +
-                    "\n".join(rows)
-                )
-
-                sections.append(
-                    {
-                        "text": table_text,
-                        "source": source,
-                        "page": page_number,
-                        "section_title": f"table_{table_idx}",
-                        "section_type": "table",
-                    }
-                )
+                section = _extract_table_section(table, source, page_number, table_idx)
+                if section:
+                    sections.append(section)
 
         except Exception as e:
             print(

@@ -35,14 +35,15 @@ class SearchingAgent:
         documents = initial_documents
         iteration = 0
         while iteration < self.max_iterations:
+            coverage = calculate_coverage(user_query,documents)
+            if coverage >= self.coverage_threshold:
+                break
             missing_info = self.identify_missing_information(
                 user_query,
                 documents
             )
             query = f"User Query: {user_query}\n\nThe identified missing information is: {missing_info}"
-            coverage = calculate_coverage(query,documents)
-            if coverage >= self.coverage_threshold:
-                break
+            
             queries = self.generate_search_queries(user_query,documents,missing_info)
             new_documents = self.retrieve_documents(queries)
             documents.extend(new_documents)
