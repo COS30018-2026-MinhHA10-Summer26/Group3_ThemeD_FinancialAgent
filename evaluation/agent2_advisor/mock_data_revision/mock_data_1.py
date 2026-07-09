@@ -1,0 +1,66 @@
+"""
+Mock inputs for testing the Advisor Agent revision process.
+
+Auto-generated from advisor revision run: mock_data_1.py.
+"""
+
+from ai_integration.agent2_advisor.mock_data import MOCK_CONTEXT_DOCS, USER_QUERY
+
+MOCK_ADVISOR_REPORT_V2 = """
+# Tesla Financial Health and Future Outlook
+
+## Preliminary Analysis
+
+Tesla, Inc. operates in the automotive and energy sectors, focusing on electric vehicles (EVs) and renewable energy solutions. The company has established itself as a leader in EV technology, with significant investments in research and development (R&D) for battery technology, self-driving capabilities, and energy storage systems.
+
+### Business Model
+Tesla's business model is centered around:
+- **Electric Vehicles**: Manufacturing and selling a range of electric vehicles, including the Model S, Model 3, Model X, and Model Y.
+- **Energy Generation and Storage**: Offering solar energy products and energy storage solutions like the Powerwall and Megapack.
+- **Direct Sales Model**: Utilizing a direct-to-consumer sales approach, which allows for better control over customer experience and inventory management.
+
+### Competitive Landscape
+The automotive market is highly competitive, with traditional automakers and new entrants increasingly focusing on electric vehicles. Tesla competes not only with established brands but also with emerging companies in the EV space. For instance, companies like Rivian and Lucid Motors are gaining traction, while traditional automakers like Ford and GM are ramping up their EV offerings.
+
+### Potential Risks
+- **Regulatory Challenges**: Tesla faces various regulations regarding vehicle safety, emissions, and self-driving technology, which could impact its operations.
+- **Supply Chain Vulnerabilities**: The company relies on a global supply chain for critical components, making it susceptible to disruptions, especially given its single-source supplier dependencies for key materials.
+- **Market Volatility**: The automotive industry is cyclical, and Tesla's sales may be affected by economic downturns or shifts in consumer preferences.
+
+## Key Financial Metrics Comparison
+
+### Financial Metrics Overview
+Here are the key financial metrics for Tesla for the fiscal year 2022 compared to 2021:
+
+| Metric | Tesla 2022 | Tesla 2021 | Change (Abs) | Change (%) |
+| :--- | :---: | :---: | :---: | :---: |
+| EBIT | 13,656.00 | 12,400.00 | +1,256.00 | +10.13% |
+| Equity | 45,898.00 | 40,000.00 | +5,898.00 | +14.74% |
+| Market Capitalization | 389,000.00 | 350,000.00 | +39,000.00 | +11.14% |
+| Sales | 81,462.00 | 53,000.00 | +28,462.00 | +53.70% |
+| Total Assets | 82,338.00 | 70,000.00 | +12,338.00 | +17.63% |
+| Total Liabilities | 36,440.00 | 30,000.00 | +6,440.00 | +21.47% |
+
+### Risk Assessment
+The Altman Z-Score for Tesla indicates a score of **8.367**, placing it in the **Safe Zone (Low Bankruptcy Risk)**. Here are the key components of the Z-Score:
+
+- **Working Capital to Assets**: 0.1726
+- **Retained Earnings to Assets**: 0.1565
+- **EBIT to Assets**: 0.1659
+- **Equity Market Value to Liabilities**: 10.6751
+- **Sales to Assets**: 0.9894
+
+Additionally, the liabilities to market capitalization ratio is **0.0937**, indicating a healthy balance between debt and equity.
+
+## Conclusion and Future Outlook
+Tesla's financial health appears robust, with increasing sales, stable equity, and a strong market capitalization. The company is well-positioned to continue its leadership in the EV market and expand its energy solutions. However, it must navigate regulatory challenges and supply chain vulnerabilities to maintain its growth trajectory.
+
+### Actionable Advice
+1. **Diversify Supply Chain**: To mitigate risks associated with single-source suppliers, Tesla should explore diversifying its supplier base for critical components.
+2. **Enhance R&D Investments**: Continue investing in R&D to maintain technological leadership and improve production efficiency.
+3. **Monitor Regulatory Changes**: Stay ahead of regulatory developments and adapt strategies accordingly to ensure compliance and capitalize on incentives.
+4. **Expand Market Presence**: Consider strategic partnerships or acquisitions to enhance market share in both the automotive and energy sectors.
+
+### Next Steps
+Continue monitoring Tesla's financial performance and market conditions, especially in light of regulatory changes and competition in the EV and energy sectors.
+"""
