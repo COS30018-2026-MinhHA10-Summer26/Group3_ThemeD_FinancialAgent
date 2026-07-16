@@ -6,8 +6,13 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-import re
 from typing import Any
+
+from ai_integration.entity_filter import (
+    filter_documents_for_query_entity,
+    lexical_relevance_score,
+    matches_query_entity,
+)
 
 
 class RetrievalAgent:
@@ -42,6 +47,11 @@ class RetrievalAgent:
         if retriever is not None:
             try:
                 retrieved_docs, _latency = retriever.retrieve(query)
+                retrieved_docs = filter_documents_for_query_entity(
+                    query,
+                    retrieved_docs,
+                    memory.get("metadata", {}),
+                )
                 similarity_score = float(retrieved_docs[0].get("score", 0.0)) if retrieved_docs else 0.0
                 workflow_steps.append("retrieved_local_context")
                 tool_calls.append({"tool": "Retriever"})
@@ -50,14 +60,24 @@ class RetrievalAgent:
                 errors.append(f"retriever_error: {exc}")
 
         if not retrieved_docs and documents:
-            retrieved_docs, similarity_score = self._score_documents(query, documents, top_k=top_k)
+            retrieved_docs, similarity_score = self._score_documents(
+                query,
+                documents,
+                top_k=top_k,
+                metadata=memory.get("metadata", {}),
+            )
             workflow_steps.append("retrieved_memory_context")
             tool_calls.append({"tool": "KeywordRetriever"})
             tool_results.append({"tool": "KeywordRetriever", "document_count": len(retrieved_docs)})
 
         threshold = float(memory.get("retrieval_threshold", 0.25))
         deduped_docs = self._deduplicate_documents(retrieved_docs)[:top_k]
-        coverage_score = max(similarity_score, min(1.0, len(deduped_docs) / max(top_k, 1)))
+        entity_matched_docs = [
+            doc for doc in deduped_docs
+            if matches_query_entity(query, doc, memory.get("metadata", {}))
+        ]
+        density_score = len(entity_matched_docs) / max(top_k, 1)
+        coverage_score = max(similarity_score, min(1.0, density_score))
 
         metadata["retrieval_similarity"] = similarity_score
         metadata["retrieval_threshold"] = threshold
@@ -91,15 +111,16 @@ class RetrievalAgent:
         documents: list[dict[str, Any]],
         *,
         top_k: int,
+        metadata: dict[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], float]:
         scored_docs: list[dict[str, Any]] = []
-        query_terms = set(re.findall(r"[a-zA-Z0-9]+", query.lower()))
         for document in documents:
             text = str(document.get("text", document.get("content", ""))).strip()
             if not text:
                 continue
-            doc_terms = set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
-            score = len(query_terms & doc_terms) / len(query_terms) if query_terms else 0.0
+            if not matches_query_entity(query, document, metadata):
+                continue
+            score = lexical_relevance_score(query, document, metadata)
             enriched = dict(document)
             enriched["score"] = float(score)
             scored_docs.append(enriched)

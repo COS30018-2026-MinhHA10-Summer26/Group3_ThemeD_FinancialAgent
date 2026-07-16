@@ -20,6 +20,7 @@ import yaml
 from ai_integration.agent1_planner.answer_agent import AnswerAgent
 from ai_integration.agent1_planner.retrieval_agent import RetrievalAgent
 from ai_integration.agent5_searcher.searching_agent import SearchingAgent
+from ai_integration.entity_filter import filter_documents_for_query_entity
 from ai_integration.memory.session_memory import ShortTermMemory
 
 
@@ -513,9 +514,10 @@ class PlanningOrchestrator:
             if not targeted_queries:
                 targeted_queries = [focused_query]
             for search_query in targeted_queries[:3]:
-                search_docs.extend(self._search_for_context(search_query))
+                focused_search_query = f"{query}\n{search_query}"
+                search_docs.extend(self._search_for_context(focused_search_query))
 
-        merged_docs = self._deduplicate_documents(retrieved_docs + search_docs)
+        merged_docs = filter_documents_for_query_entity(query, self._deduplicate_documents(retrieved_docs + search_docs))
         coverage_score = max(coverage_score, min(1.0, len(merged_docs) / max(top_k, 1)))
 
         return {
@@ -726,7 +728,7 @@ class PlanningOrchestrator:
                     "score": 0.0,
                 }
             )
-        return docs
+        return filter_documents_for_query_entity(query, docs)
 
     def _deduplicate_documents(self, documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen: set[tuple[str, str]] = set()

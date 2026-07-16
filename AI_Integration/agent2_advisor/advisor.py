@@ -476,7 +476,10 @@ class AdvisorAgent:
             "Only state additional information is required if the retrieval/search delegate cannot provide it.\n"
             "3. The final report must be presented clearly in English using Markdown format, with clear sections, "
             "verified data from tools, and proper source citations.\n"
-            "4. When a chart would make key financial metrics easier to understand, use figure_generation_tool. "
+            "4. Do not invent revenue, income, debt, market cap, valuation, or risk inputs. If exact values are not present "
+            "in the provided context or tool outputs, say they were not found and explain what evidence is needed.\n"
+            "5. Ignore context documents that clearly belong to a different company than the user's requested company.\n"
+            "6. When a chart would make key financial metrics easier to understand, use figure_generation_tool. "
             "Embed the returned Supabase Markdown image link directly in the report. Use Markdown tables when a table is clearer."
         )
 
