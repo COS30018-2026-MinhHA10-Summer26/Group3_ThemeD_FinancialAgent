@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Callable, List, Dict, Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -20,13 +20,22 @@ ENV_PATH = PROJECT_ROOT / "backend" / ".env"
 load_dotenv(dotenv_path=str(PROJECT_ROOT / ".env"))
 load_dotenv(dotenv_path=str(ENV_PATH))
 
+ContextProvider = Callable[[str, List[Dict[str, Any]], Dict[str, Any]], Dict[str, Any]]
+
+
 class AdvisorAgent:
     """
     Advisor Agent specialized in strategic business analysis and financial evaluation.
     Utilizes OpenAI's ChatCompletion API with native Tool calling.
     """
     
-    def __init__(self, model: str = "gpt-4o-mini", max_tool_loops: int = 15, max_self_review_loops: int = 2):
+    def __init__(
+        self,
+        model: str = "gpt-4o-mini",
+        max_tool_loops: int = 15,
+        max_self_review_loops: int = 2,
+        context_provider: ContextProvider | None = None,
+    ):
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(f"OPENAI_API_KEY not found in env. Checked path: {ENV_PATH}")
@@ -35,6 +44,10 @@ class AdvisorAgent:
         self.model = model
         self.max_tool_loops = max_tool_loops
         self.max_self_review_loops = max_self_review_loops
+        self.context_provider = context_provider
+        self.current_query = ""
+        self.current_context_docs: List[Dict[str, Any]] = []
+        self.delegated_context_events: List[Dict[str, Any]] = []
         
         # Define the tools schema for the OpenAI API
         self.tools_schema = [
@@ -165,6 +178,37 @@ class AdvisorAgent:
                         "required": ["figure_type", "title", "data"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "request_additional_context",
+                    "description": (
+                        "Delegates to retrieval/search agents when the provided documents are missing "
+                        "specific evidence needed for the analysis. Use this before drafting unsupported "
+                        "claims or when the user asks for facts not present in the current context."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "missing_information": {
+                                "type": "array",
+                                "description": "Specific facts, metrics, filings, or disclosures missing from the current context.",
+                                "items": {"type": "string"}
+                            },
+                            "search_queries": {
+                                "type": "array",
+                                "description": "Optional targeted document-oriented queries for the retrieval/search agents.",
+                                "items": {"type": "string"}
+                            },
+                            "reason": {
+                                "type": "string",
+                                "description": "Why this extra context is required for the advisor report."
+                            }
+                        },
+                        "required": ["missing_information", "reason"]
+                    }
+                }
             }
         ]
 
@@ -190,11 +234,80 @@ class AdvisorAgent:
             elif name == "figure_generation_tool":
                 res = figure_generation_tool(**arguments)
                 return json.dumps(res, indent=2, ensure_ascii=False)
+
+            elif name == "request_additional_context":
+                res = self._request_additional_context(arguments)
+                return json.dumps(res, indent=2, ensure_ascii=False)
             
             else:
                 return f"Error: Tool '{name}' is not recognized."
         except Exception as e:
             return f"Error executing tool '{name}': {str(e)}"
+
+    def _request_additional_context(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        if self.context_provider is None:
+            return {
+                "status": "unavailable",
+                "message": "No retrieval/search delegate is configured for this AdvisorAgent.",
+                "added_document_count": 0,
+                "documents": [],
+            }
+
+        result = self.context_provider(self.current_query, self.current_context_docs, arguments)
+        new_docs = result.get("context_docs", [])
+        if isinstance(new_docs, list):
+            self.current_context_docs = self._deduplicate_documents(self.current_context_docs + new_docs)
+
+        event = {
+            "missing_information": arguments.get("missing_information", []),
+            "search_queries": arguments.get("search_queries", []),
+            "reason": arguments.get("reason", ""),
+            "added_document_count": len(new_docs) if isinstance(new_docs, list) else 0,
+            "coverage_score": result.get("coverage_score"),
+            "metadata": result.get("metadata", {}),
+        }
+        self.delegated_context_events.append(event)
+
+        return {
+            "status": "completed",
+            "added_document_count": event["added_document_count"],
+            "coverage_score": event["coverage_score"],
+            "documents": self._summarize_context_docs(new_docs if isinstance(new_docs, list) else []),
+            "metadata": event["metadata"],
+        }
+
+    def _summarize_context_docs(self, context_docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        summaries: List[Dict[str, Any]] = []
+        for index, doc in enumerate(context_docs, start=1):
+            text = str(doc.get("text", doc.get("content", ""))).replace("\n", " ").strip()
+            summaries.append(
+                {
+                    "index": index,
+                    "source": doc.get("source", f"Doc {index}"),
+                    "page": doc.get("page", 1),
+                    "score": doc.get("score"),
+                    "preview": text[:700],
+                }
+            )
+        return summaries
+
+    def _deduplicate_documents(self, context_docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        seen: set[tuple[str, str]] = set()
+        unique: List[Dict[str, Any]] = []
+        for doc in context_docs:
+            text = str(doc.get("text", doc.get("content", ""))).strip()
+            source = str(doc.get("source", "unknown"))
+            key = (source, text)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized = dict(doc)
+            normalized["text"] = text
+            normalized["content"] = text
+            normalized["source"] = source
+            normalized["page"] = normalized.get("page", 1)
+            unique.append(normalized)
+        return unique
 
     def _build_context_string(self, context_docs: List[Dict[str, Any]]) -> str:
         context_str = ""
@@ -331,6 +444,7 @@ class AdvisorAgent:
         final_report = draft_report
 
         for _ in range(self.max_self_review_loops):
+            context_str = self._build_context_string(self.current_context_docs)
             self_check = self._self_check_report(query, context_str, final_report)
             if self_check["passes"]:
                 return final_report
@@ -344,8 +458,12 @@ class AdvisorAgent:
         Runs the Advisor Agent to analyze the user's query against the context documents.
         """
         
+        self.current_query = query
+        self.current_context_docs = self._deduplicate_documents(context_docs)
+        self.delegated_context_events = []
+
         # Build the background context description for the model
-        context_str = self._build_context_string(context_docs)
+        context_str = self._build_context_string(self.current_context_docs)
 
         system_message = (
             "You are a professional Advisor Agent specialized in strategic business and financial consulting.\n"
@@ -354,7 +472,8 @@ class AdvisorAgent:
             "1. ALWAYS USE THE PROVIDED TOOLS when financial calculations, comparisons, or analytical frameworks "
             "(SWOT, Porter's 5 Forces, PESTEL) are needed. Do not manually calculate complex financial or mathematical formulas.\n"
             "2. If the context documents lack necessary information for risk analysis or fulfilling the user's core request, "
-            "explicitly propose the additional information needed (example: 'ADDITIONAL INFORMATION REQUIRED: need data on short-term debt...').\n"
+            "call request_additional_context with the missing information and targeted search queries before drafting the final answer. "
+            "Only state additional information is required if the retrieval/search delegate cannot provide it.\n"
             "3. The final report must be presented clearly in English using Markdown format, with clear sections, "
             "verified data from tools, and proper source citations.\n"
             "4. When a chart would make key financial metrics easier to understand, use figure_generation_tool. "
@@ -367,4 +486,5 @@ class AdvisorAgent:
         ]
 
         draft_report = self._run_tool_calling(messages, temperature=0.2)
+        context_str = self._build_context_string(self.current_context_docs)
         return self._self_review_and_revise(query, context_str, draft_report)

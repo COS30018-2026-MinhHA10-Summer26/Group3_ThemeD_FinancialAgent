@@ -19,6 +19,7 @@ import yaml
 
 from ai_integration.agent1_planner.answer_agent import AnswerAgent
 from ai_integration.agent1_planner.retrieval_agent import RetrievalAgent
+from ai_integration.agent5_searcher.searching_agent import SearchingAgent
 from ai_integration.memory.session_memory import ShortTermMemory
 
 
@@ -270,7 +271,8 @@ class PlanningOrchestrator:
         shared_memory.set_retrieval_docs(state["context_docs"])
 
     def _run_search_agent(self, state: dict[str, Any]) -> None:
-        search_docs = self._search_for_context(state["cleaned_query"])
+        agent = self._build_search_agent()
+        search_docs = agent.run(state["cleaned_query"], state.get("context_docs", []))
         merged_docs = self._deduplicate_documents(state.get("context_docs", []) + search_docs)
         state["context_docs"] = merged_docs
         top_k = int(self.config.get("top_k", 5))
@@ -308,6 +310,11 @@ class PlanningOrchestrator:
         state["errors"].extend(result["errors"])
         state["artifacts"].update(result["artifacts"])
         state["report"] = result.get("advisor_report")
+        if result.get("context_docs") is not None:
+            state["context_docs"] = result["context_docs"]
+            state["metadata"]["final_context_count"] = len(state["context_docs"])
+            state["metadata"]["coverage_score"] = result.get("coverage_score", state.get("coverage_score", 0.0))
+            state["coverage_score"] = float(state["metadata"]["coverage_score"])
         state["response"] = result["final_output"]
         state["final_output"] = result["final_output"]
         if result["final_output"]:
@@ -369,12 +376,26 @@ class PlanningOrchestrator:
 
         # --- Advisor (v1) ---
         try:
-            advisor = advisor_cls()
+            advisor = self._build_advisor_agent(advisor_cls)
             advisor_report = advisor.run(query, context_docs)
+            context_docs = self._deduplicate_documents(getattr(advisor, "current_context_docs", context_docs))
+            delegated_events = list(getattr(advisor, "delegated_context_events", []))
             workflow_steps.append("advisor_completed")
             tool_calls.append({"tool": "AdvisorAgent"})
-            tool_results.append({"tool": "AdvisorAgent", "status": "completed"})
+            if delegated_events:
+                workflow_steps.append("advisor_delegated_context_retrieval")
+                tool_calls.append({"tool": "AdvisorAgent.request_additional_context"})
+            tool_results.append(
+                {
+                    "tool": "AdvisorAgent",
+                    "status": "completed",
+                    "context_document_count": len(context_docs),
+                    "delegated_context_events": delegated_events,
+                }
+            )
             artifacts["advisor_report"] = advisor_report
+            artifacts["advisor_context_events"] = delegated_events
+            shared_memory.set_retrieval_docs(context_docs)
             shared_memory.set_advisor_report(advisor_report, version_label="v1")
         except Exception as exc:
             errors.append(f"advisor_agent_error: {exc}")
@@ -434,6 +455,80 @@ class PlanningOrchestrator:
             "artifacts": artifacts,
             "advisor_report": advisor_report,
             "final_output": advisor_report or self._deep_advice_fallback(query, context_docs),
+            "context_docs": context_docs,
+            "coverage_score": min(1.0, len(context_docs) / max(int(self.config.get("top_k", 5)), 1)),
+        }
+
+    def _build_advisor_agent(self, advisor_cls):
+        try:
+            return advisor_cls(context_provider=self._delegate_context_request)
+        except TypeError:
+            return advisor_cls()
+
+    def _delegate_context_request(
+        self,
+        query: str,
+        current_context_docs: list[dict[str, Any]],
+        request: dict[str, Any],
+    ) -> dict[str, Any]:
+        missing_information = request.get("missing_information", [])
+        search_queries = request.get("search_queries", [])
+        if not isinstance(missing_information, list):
+            missing_information = [str(missing_information)]
+        if not isinstance(search_queries, list):
+            search_queries = [str(search_queries)]
+
+        focused_query_parts = [query]
+        focused_query_parts.extend(str(item) for item in missing_information if str(item).strip())
+        focused_query = "\n".join(focused_query_parts)
+
+        retrieved_docs: list[dict[str, Any]] = []
+        retrieval_errors: list[str] = []
+        retrieval_metadata: dict[str, Any] = {}
+        coverage_score = 0.0
+
+        try:
+            result = self._build_retrieval_agent().run(
+                focused_query,
+                {
+                    "documents": current_context_docs,
+                    "top_k": self.config.get("top_k", 5),
+                    "retrieval_threshold": self.config.get("retrieval_threshold", 0.25),
+                },
+            )
+            retrieved_docs.extend(result.get("context_docs", []))
+            retrieval_errors.extend(result.get("errors", []))
+            retrieval_metadata.update(result.get("metadata", {}))
+            coverage_score = max(coverage_score, float(result.get("coverage_score", 0.0)))
+        except Exception as exc:
+            retrieval_errors.append(f"advisor_delegate_retrieval_error: {exc}")
+
+        top_k = int(self.config.get("top_k", 5))
+        threshold = float(self.config.get("advisor_context_threshold", self.config.get("retrieval_threshold", 0.8)))
+        should_search = coverage_score < threshold or not retrieved_docs
+
+        search_docs: list[dict[str, Any]] = []
+        if should_search:
+            targeted_queries = [str(item) for item in search_queries if str(item).strip()]
+            if not targeted_queries:
+                targeted_queries = [focused_query]
+            for search_query in targeted_queries[:3]:
+                search_docs.extend(self._search_for_context(search_query))
+
+        merged_docs = self._deduplicate_documents(retrieved_docs + search_docs)
+        coverage_score = max(coverage_score, min(1.0, len(merged_docs) / max(top_k, 1)))
+
+        return {
+            "context_docs": merged_docs,
+            "coverage_score": coverage_score,
+            "errors": retrieval_errors,
+            "metadata": {
+                **retrieval_metadata,
+                "missing_information": missing_information,
+                "search_queries": search_queries,
+                "searched_external_context": bool(search_docs),
+                "added_context_count": len(merged_docs),
+            },
         }
 
     @staticmethod
@@ -464,6 +559,12 @@ class PlanningOrchestrator:
             lines.extend(["", f"No grounded context was found yet for: {query}"])
         return "\n".join(lines)
 
+    def _build_search_agent(self) -> SearchingAgent:
+        from ai_integration.agent5_searcher.searching_agent import SearchingAgent
+        return SearchingAgent(
+            coverage_threshold=float(self.config.get("search_coverage_threshold", 0.4)),
+            max_iterations=int(self.config.get("search_max_iterations", 1)),
+        )
     def _build_retrieval_agent(self) -> RetrievalAgent:
         return RetrievalAgent(self.config, DEFAULT_RAW_DIR)
 
