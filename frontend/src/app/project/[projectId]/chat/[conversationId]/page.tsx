@@ -1,9 +1,12 @@
 "use client";
 
+/* eslint-disable react-hooks/set-state-in-effect */
+
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { createApiClient, getApiErrorMessage } from "@/lib/api";
+import { readPageCache, writePageCache } from "@/lib/page-cache";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -91,6 +94,8 @@ function TypingIndicator() {
   );
 }
 
+const CHAT_CACHE_PREFIX = "project-chat";
+
 export default function ProjectChatPage() {
   const router = useRouter();
   const params = useParams<{ projectId: string | string[]; conversationId: string | string[] }>();
@@ -158,9 +163,27 @@ export default function ProjectChatPage() {
     if (!authToken || !currentRole) return;
 
     let cancelled = false;
+    const cacheKey = `${CHAT_CACHE_PREFIX}:${projectId}:${conversationId}`;
+    const cachedPage = readPageCache<{
+      project: ProjectRow | null;
+      conversation: ConversationRow | null;
+      messages: MessageRow[];
+      currentRole: RoleName | null;
+      currentEmail: string;
+    }>(cacheKey);
+
+    if (cachedPage) {
+      setProject(cachedPage.project);
+      setConversation(cachedPage.conversation);
+      setMessages(cachedPage.messages);
+      setCurrentRole(cachedPage.currentRole);
+      setCurrentEmail(cachedPage.currentEmail);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
 
     async function loadChatContext() {
-      setLoading(true);
       setError(null);
 
       try {
@@ -182,13 +205,22 @@ export default function ProjectChatPage() {
         if (cancelled) return;
 
         setProject(projectResponse.data);
-        setConversation(conversationsResponse.data.find((row) => row.conversation_id === conversationId) ?? null);
-        setMessages(
+        const nextConversation = conversationsResponse.data.find((row) => row.conversation_id === conversationId) ?? null;
+        const nextMessages =
           messagesResponse.data.map((message) => ({
             ...message,
             role: message.role ?? "assistant",
-          })),
-        );
+          }));
+
+        setConversation(nextConversation);
+        setMessages(nextMessages);
+        writePageCache(cacheKey, {
+          project: projectResponse.data,
+          conversation: nextConversation,
+          messages: nextMessages,
+          currentRole,
+          currentEmail,
+        });
       } catch (loadError) {
         if (cancelled) return;
         setError(getApiErrorMessage(loadError, "Failed to load chat context"));
@@ -204,7 +236,7 @@ export default function ProjectChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentRole, conversationId, projectId, session]);
+  }, [currentRole, currentEmail, conversationId, projectId, session]);
 
   useEffect(() => {
     if (messagesRef.current) {

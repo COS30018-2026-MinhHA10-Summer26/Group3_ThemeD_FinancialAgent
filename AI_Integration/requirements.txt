@@ -21,6 +21,7 @@ matplotlib>=3.8.0
 
 # PDF Processing
 pypdf==4.0.1
+pymupdf==1.28.0
 
 # Type Hints
 typing-extensions==4.8.0

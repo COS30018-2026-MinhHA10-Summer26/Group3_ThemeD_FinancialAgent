@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Callable, List, Dict, Any
+from typing import Any, Callable, Dict, List, Optional
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -452,6 +452,73 @@ class AdvisorAgent:
             final_report = self._revise_report(query, context_str, final_report, self_check)
 
         return final_report
+
+    def revise_with_feedback(
+        self,
+        query: str,
+        context_docs: List[Dict[str, Any]],
+        current_report: str,
+        critic_feedback: str,
+        evaluator_feedback: Optional[str] = None,
+    ) -> str:
+        """Revise a report based on external Critic and/or Evaluator feedback.
+
+        Unlike the internal ``_self_review_and_revise`` loop (which uses
+        self-generated quality checks), this method accepts *external*
+        feedback from the Critic Agent and optionally the Evaluator Agent
+        to produce an improved version of the report.
+
+        Parameters
+        ----------
+        query:
+            The original user query.
+        context_docs:
+            The current retrieval context documents.
+        current_report:
+            The advisor report to revise (v1 or latest version).
+        critic_feedback:
+            Full Markdown critique from the Critic Agent, including the
+            ``## Issues to Resolve`` checklist.
+        evaluator_feedback:
+            Optional Markdown evaluation from the Evaluator Agent.
+
+        Returns
+        -------
+        str
+            The revised advisor report (Markdown).
+        """
+        self.current_context_docs = self._deduplicate_documents(context_docs)
+        context_str = self._build_context_string(self.current_context_docs)
+
+        # Extract checklist items from critic feedback
+        combined_issues: list[str] = []
+        for line in critic_feedback.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("- [ ]"):
+                issue_text = stripped[len("- [ ]"):].strip()
+                if issue_text:
+                    combined_issues.append(issue_text)
+
+        revision_instructions = (
+            f"Critic Feedback:\n{critic_feedback}\n\n"
+            + (f"Evaluator Feedback:\n{evaluator_feedback}\n\n"
+               if evaluator_feedback else "")
+            + "Address ALL the issues listed above. Keep verified data "
+            + "and correct analysis intact."
+        )
+
+        feedback_as_self_check: Dict[str, Any] = {
+            "passes": False,
+            "issues": combined_issues,
+            "revision_instructions": revision_instructions,
+        }
+
+        revised = self._revise_report(
+            query, context_str, current_report, feedback_as_self_check,
+        )
+        # Rebuild context string (tools may have fetched new documents)
+        context_str = self._build_context_string(self.current_context_docs)
+        return self._self_review_and_revise(query, context_str, revised)
 
     def run(self, query: str, context_docs: List[Dict[str, Any]]) -> str:
         """

@@ -351,3 +351,59 @@ class EvaluatorAgent:
         return self._self_review_and_revise(
             query, context_docs, response, draft_evaluation, critic_issues, advisor_report_v2
         )
+
+    def evaluate_structured(
+        self,
+        query: str,
+        context_docs: List[Dict[str, Any]],
+        response: str,
+        critic_issues: Optional[str] = None,
+        advisor_report_v2: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Evaluate and return a structured verdict alongside the Markdown report.
+
+        Returns a dict with:
+        - ``verdict``: ``"PASS"`` or ``"FAIL"``
+        - ``evaluation_markdown``: the full Markdown evaluation text
+        - ``all_topics_covered``: bool from query_relevance_tool
+        - ``missing_topics``: list of topics not addressed
+        - ``response_complete``: bool from response_completeness_tool
+        - ``missing_elements``: list of missing structural elements
+        - ``all_issues_resolved``: bool from issues_resolution_tool (pipeline mode)
+        - ``unresolved_issues``: list of unresolved critic issues (pipeline mode)
+        """
+        # Generate the full Markdown evaluation via the existing run() method
+        evaluation_md = self.run(
+            query, context_docs, response, critic_issues, advisor_report_v2,
+        )
+
+        # Run pre-audit tools programmatically to get boolean signals
+        is_pipeline = critic_issues is not None and advisor_report_v2 is not None
+        target_text = advisor_report_v2 if is_pipeline else response
+
+        relevance = query_relevance_tool(query, target_text)
+        completeness = response_completeness_tool(target_text)
+
+        issues_resolved = True
+        unresolved_issues: list[str] = []
+        if is_pipeline and critic_issues:
+            resolution = issues_resolution_tool(critic_issues, advisor_report_v2)
+            issues_resolved = resolution["all_resolved"]
+            unresolved_issues = resolution.get("unresolved", [])
+
+        verdict_pass = (
+            relevance["all_covered"]
+            and completeness["passes"]
+            and issues_resolved
+        )
+
+        return {
+            "verdict": "PASS" if verdict_pass else "FAIL",
+            "evaluation_markdown": evaluation_md,
+            "all_topics_covered": relevance["all_covered"],
+            "missing_topics": relevance.get("missing_topics", []),
+            "response_complete": completeness["passes"],
+            "missing_elements": completeness.get("missing_elements", []),
+            "all_issues_resolved": issues_resolved,
+            "unresolved_issues": unresolved_issues,
+        }

@@ -75,3 +75,8 @@ scipy==1.17.1
 tqdm==4.67.3
 python-dateutil==2.9.0.post0
 PyYAML==6.0.3
+
+pdfplumber
+fitz
+tools
+pymupdf

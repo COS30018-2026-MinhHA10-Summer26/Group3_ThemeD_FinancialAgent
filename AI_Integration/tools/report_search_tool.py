@@ -8,7 +8,7 @@ from typing import Dict, Any
 
 load_dotenv()
 
-SERP_API_KEY = os.getenv("SERP_API_KEY")
+SERP_API_KEY = os.getenv("SERP_API_KEY") or os.getenv("API_KEY") or os.getenv("SERPAPI_API_KEY")
 
 DOWNLOAD_DIR = "data/raw/"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)

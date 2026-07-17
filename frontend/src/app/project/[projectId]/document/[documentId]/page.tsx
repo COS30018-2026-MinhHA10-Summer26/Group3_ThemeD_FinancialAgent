@@ -1,9 +1,12 @@
 "use client";
 
+/* eslint-disable react-hooks/set-state-in-effect */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { createApiClient, getApiErrorMessage } from "@/lib/api";
+import { readPageCache, writePageCache } from "@/lib/page-cache";
 import type {
   ChunkRow,
   DocumentChunksResponse,
@@ -52,6 +55,8 @@ function formatDate(dateString: string | null | undefined): string {
     minute: "2-digit",
   });
 }
+
+const DOCUMENT_CACHE_PREFIX = "project-document";
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
@@ -121,9 +126,25 @@ export default function DocumentDetailPage() {
     if (!authToken) return;
 
     let cancelled = false;
+    const cacheKey = `${DOCUMENT_CACHE_PREFIX}:${documentId}`;
+    const cachedPage = readPageCache<{
+      document: DocumentRow | null;
+      chunks: ChunkRow[];
+      pdfUrl: string | null;
+      currentRole: RoleName | null;
+    }>(cacheKey);
+
+    if (cachedPage) {
+      setDocument(cachedPage.document);
+      setChunks(cachedPage.chunks);
+      setPdfUrl(cachedPage.pdfUrl);
+      setCurrentRole(cachedPage.currentRole);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
 
     async function load() {
-      setLoading(true);
       setError(null);
 
       try {
@@ -139,6 +160,12 @@ export default function DocumentDetailPage() {
         setDocument(docRes.data);
         setChunks(chunksRes.data.chunks);
         setPdfUrl(rawRes.data.signed_url);
+        writePageCache(cacheKey, {
+          document: docRes.data,
+          chunks: chunksRes.data.chunks,
+          pdfUrl: rawRes.data.signed_url,
+          currentRole,
+        });
       } catch (loadError) {
         if (cancelled) return;
         setError(getApiErrorMessage(loadError, "Failed to load document details"));

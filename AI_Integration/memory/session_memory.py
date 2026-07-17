@@ -56,6 +56,13 @@ class ShortTermMemory:
         self._critic_issues: list[str] = []
         self._critic_argument_updated_at: str | None = None
 
+        # Evaluator verdict compartment
+        self._evaluator_verdict: dict[str, Any] = {}
+        self._evaluator_verdict_updated_at: str | None = None
+
+        # Revision loop tracking
+        self._revision_count: int = 0
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -169,6 +176,39 @@ class ShortTermMemory:
         }
 
     # ------------------------------------------------------------------
+    # Evaluator verdict compartment
+    # ------------------------------------------------------------------
+
+    def set_evaluator_verdict(self, verdict: dict[str, Any]) -> None:
+        """Store the evaluator's structured verdict.
+
+        Parameters
+        ----------
+        verdict:
+            Dict with at least ``verdict`` ("PASS"/"FAIL"), plus optional
+            detail keys like ``missing_topics``, ``unresolved_issues``, etc.
+        """
+        self._evaluator_verdict = dict(verdict)
+        self._evaluator_verdict_updated_at = self._now()
+
+    def get_evaluator_verdict(self) -> dict[str, Any]:
+        """Return the latest evaluator verdict dict (empty if never set)."""
+        return dict(self._evaluator_verdict)
+
+    # ------------------------------------------------------------------
+    # Revision loop tracking
+    # ------------------------------------------------------------------
+
+    def increment_revision_count(self) -> int:
+        """Increment and return the revision loop counter."""
+        self._revision_count += 1
+        return self._revision_count
+
+    def get_revision_count(self) -> int:
+        """Return how many revision loops have been executed."""
+        return self._revision_count
+
+    # ------------------------------------------------------------------
     # Snapshot (debug / audit)
     # ------------------------------------------------------------------
 
@@ -194,4 +234,9 @@ class ShortTermMemory:
                 "issues": list(self._critic_issues),
                 "updated_at": self._critic_argument_updated_at,
             },
+            "evaluator_verdict": {
+                "data": dict(self._evaluator_verdict),
+                "updated_at": self._evaluator_verdict_updated_at,
+            },
+            "revision_count": self._revision_count,
         }

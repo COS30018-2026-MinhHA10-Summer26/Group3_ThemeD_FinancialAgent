@@ -10,3 +10,6 @@ retrieval:
   vector_weight: 0.6
   bm25_weight: 0.4
 
+revision:
+  max_loops: 2
+  search_on_missing: true

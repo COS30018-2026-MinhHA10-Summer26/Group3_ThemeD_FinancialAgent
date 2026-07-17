@@ -1,9 +1,12 @@
 "use client";
 
+/* eslint-disable react-hooks/set-state-in-effect */
+
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { createApiClient, getApiErrorMessage } from "@/lib/api";
+import { readPageCache, writePageCache } from "@/lib/page-cache";
 import { ProjectConversationsCard } from "@/components/project-detail/project-conversations-card";
 import { ProjectDetailsCard } from "@/components/project-detail/project-details-card";
 import { ProjectMembersCard } from "@/components/project-detail/project-members-card";
@@ -21,6 +24,7 @@ import type {
 
 const EMBEDDING_MODEL_OPTIONS = [{ value: "OpenAIEmbedding", label: "OpenAIEmbedding" }];
 const LLM_MODEL_OPTIONS = [{ value: "OpenAI", label: "OpenAI" }];
+const PROJECT_DETAIL_CACHE_PREFIX = "project-detail";
 
 function decodeToken(token: string): TokenPayload | null {
   try {
@@ -103,9 +107,39 @@ export default function ProjectDetailPage() {
     if (!authToken || !currentRole) return;
 
     let cancelled = false;
+    const cacheKey = `${PROJECT_DETAIL_CACHE_PREFIX}:${projectId}`;
+    const cachedPage = readPageCache<{
+      project: ProjectRow | null;
+      users: UserRow[];
+      conversations: ConversationRow[];
+      documents: DocumentRow[];
+      name: string;
+      description: string;
+      embeddingModel: string;
+      llmModel: string;
+      memberIds: string[];
+      currentRole: RoleName | null;
+      currentEmail: string;
+    }>(cacheKey);
+
+    if (cachedPage) {
+      setProject(cachedPage.project);
+      setUsers(cachedPage.users);
+      setConversations(cachedPage.conversations);
+      setDocuments(cachedPage.documents);
+      setName(cachedPage.name);
+      setDescription(cachedPage.description);
+      setEmbeddingModel(cachedPage.embeddingModel);
+      setLlmModel(cachedPage.llmModel);
+      setMemberIds(cachedPage.memberIds);
+      setCurrentRole(cachedPage.currentRole);
+      setCurrentEmail(cachedPage.currentEmail);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
 
     async function loadProject() {
-      setLoading(true);
       setError(null);
 
       try {
@@ -128,6 +162,19 @@ export default function ProjectDetailPage() {
         setConversations(conversationsResponse.data);
         setDocuments(documentsResponse.data);
         setUsers(usersResponse.data);
+        writePageCache(cacheKey, {
+          project: projectResponse.data,
+          users: usersResponse.data,
+          conversations: conversationsResponse.data,
+          documents: documentsResponse.data,
+          name: projectResponse.data.name,
+          description: projectResponse.data.description ?? "",
+          embeddingModel: projectResponse.data.embedding_model || EMBEDDING_MODEL_OPTIONS[0].value,
+          llmModel: projectResponse.data.llm_model || LLM_MODEL_OPTIONS[0].value,
+          memberIds: projectResponse.data.member_ids ?? [],
+          currentRole,
+          currentEmail,
+        });
       } catch (loadError) {
         if (cancelled) return;
         setError(getApiErrorMessage(loadError, "Failed to load project"));
@@ -143,7 +190,7 @@ export default function ProjectDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentRole, projectId, session]);
+  }, [currentRole, currentEmail, projectId, session]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

@@ -1,9 +1,12 @@
 "use client";
 
+/* eslint-disable react-hooks/set-state-in-effect */
+
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { createApiClient, getApiErrorMessage } from "@/lib/api";
+import { readPageCache, writePageCache } from "@/lib/page-cache";
 
 type RoleName = "Admin" | "User" | string;
 
@@ -30,6 +33,7 @@ type ProjectCreatePayload = {
 
 const EMBEDDING_MODEL_OPTIONS = [{ value: "OpenAIEmbedding", label: "OpenAIEmbedding" }];
 const LLM_MODEL_OPTIONS = [{ value: "OpenAI", label: "OpenAI" }];
+const PROJECT_LIST_CACHE_KEY = "project-list";
 
 function decodeToken(token: string): TokenPayload | null {
   try {
@@ -100,10 +104,18 @@ export default function ProjectPage() {
     }
 
     let cancelled = false;
+    const cachedPage = readPageCache<{ projects: ProjectRow[]; currentRole: RoleName | null; currentEmail: string }>(PROJECT_LIST_CACHE_KEY);
+
+    if (cachedPage) {
+      setProjects(cachedPage.projects);
+      setCurrentRole(cachedPage.currentRole);
+      setCurrentEmail(cachedPage.currentEmail);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
 
     async function loadProjects() {
-      setLoading(true);
-
       try {
         const api = createApiClient(authToken);
         const projectsResult = await api.get<ProjectRow[]>("/projects");
@@ -112,6 +124,11 @@ export default function ProjectPage() {
 
         setProjects(projectsResult.data);
         setError(null);
+        writePageCache(PROJECT_LIST_CACHE_KEY, {
+          projects: projectsResult.data,
+          currentRole,
+          currentEmail,
+        });
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -124,7 +141,7 @@ export default function ProjectPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentRole, session]);
+  }, [currentRole, currentEmail, session]);
 
   const isAdmin = currentRole === "Admin";
   const title = useMemo(() => (isAdmin ? "Project management" : "Project"), [isAdmin]);

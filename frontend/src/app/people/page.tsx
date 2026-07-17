@@ -6,6 +6,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { createApiClient, getApiErrorMessage } from "@/lib/api";
+import { readPageCache, writePageCache } from "@/lib/page-cache";
 
 type RoleName = "Admin" | "User" | string;
 
@@ -26,6 +27,8 @@ type RoleRow = {
   role_id: string;
   role_name: string;
 };
+
+const PEOPLE_CACHE_KEY = "people-page";
 
 function decodeToken(token: string): TokenPayload | null {
   try {
@@ -98,9 +101,28 @@ export default function PeoplePage() {
     }
 
     let cancelled = false;
+    const cachedPage = readPageCache<{
+      users: UserRow[];
+      roles: RoleRow[];
+      currentRole: RoleName | null;
+      currentEmail: string;
+      newRoleId: string;
+    }>(PEOPLE_CACHE_KEY);
+
+    if (cachedPage) {
+      setUsers(cachedPage.users);
+      setRoles(cachedPage.roles);
+      setCurrentRole(cachedPage.currentRole);
+      setCurrentEmail(cachedPage.currentEmail);
+      if (cachedPage.newRoleId) {
+        setNewRoleId(cachedPage.newRoleId);
+      }
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
 
     async function loadData() {
-      setLoading(true);
       setError(null);
 
       try {
@@ -118,6 +140,13 @@ export default function PeoplePage() {
         if (!newRoleId && rolesResponse.data.length > 0) {
           setNewRoleId(rolesResponse.data[0].role_id);
         }
+        writePageCache(PEOPLE_CACHE_KEY, {
+          users: usersResponse.data,
+          roles: rolesResponse.data,
+          currentRole,
+          currentEmail,
+          newRoleId: newRoleId || rolesResponse.data[0]?.role_id || "",
+        });
       } catch (loadError) {
         if (cancelled) return;
         setError(getApiErrorMessage(loadError, "Failed to load people data"));
@@ -133,7 +162,7 @@ export default function PeoplePage() {
     return () => {
       cancelled = true;
     };
-  }, [currentRole, newRoleId, session]);
+  }, [currentRole, currentEmail, newRoleId, session]);
 
   const isAdmin = currentRole === "Admin";
   const title = useMemo(() => (isAdmin ? "People management" : "People"), [isAdmin]);

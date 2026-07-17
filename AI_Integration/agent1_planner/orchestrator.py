@@ -87,8 +87,17 @@ Return JSON in this shape:
 class PlanningOrchestrator:
     """Classifier + planner + executor for the financial agent stack."""
 
-    def __init__(self) -> None:
+    def __init__(self, progress_callback=None) -> None:
         self.config = self._load_config()
+        self._progress_callback = progress_callback
+
+    def _emit_progress(self, step: str, message: str) -> None:
+        """Send a progress update to the caller if a callback is registered."""
+        if self._progress_callback is not None:
+            try:
+                self._progress_callback(step, message)
+            except Exception:
+                pass
 
     def run(self, query: str, memory: dict[str, Any] | None = None) -> dict[str, Any]:
         memory = dict(memory or {})
@@ -99,8 +108,10 @@ class PlanningOrchestrator:
         cleaned_query = query.strip()
         decision = self.classify_query(cleaned_query)
         workflow_steps.append(f"classified:{decision['route']}")
+        self._emit_progress("classifying", f"Phân loại: {decision['route']}")
         plan = self.plan_query(cleaned_query, decision)
         workflow_steps.append("planned_workflow")
+        self._emit_progress("planning", "Đã lên kế hoạch workflow")
 
         # Initialise per-request shared memory
         shared_memory = ShortTermMemory()
@@ -196,8 +207,10 @@ class PlanningOrchestrator:
                 continue
             state["executed_agents"].append(agent_name)
             state["workflow_steps"].append(f"agent_started:{agent_name}")
+            self._emit_progress(f"agent_{agent_name}", f"{agent_name} đang chạy...")
             self._execute_agent_step(agent_name, state, memory)
             state["workflow_steps"].append(f"agent_completed:{agent_name}")
+            self._emit_progress(f"agent_{agent_name}_done", f"{agent_name} hoàn thành")
             if agent_name == "SkipAgent":
                 break
 
@@ -284,18 +297,104 @@ class PlanningOrchestrator:
         state["metadata"]["coverage_score"] = state["coverage_score"]
         state["workflow_steps"].append("searched_external_context")
 
-        # Sync to shared memory
+        # Sync to shared memory (set, not append, to avoid duplicates)
         shared_memory: ShortTermMemory = state["shared_memory"]
-        shared_memory.append_retrieval_docs(search_docs)
+        shared_memory.set_retrieval_docs(merged_docs)
 
     def _run_answer_agent(self, state: dict[str, Any]) -> None:
+        shared_memory: ShortTermMemory = state["shared_memory"]
+        revision_config = self.config.get("revision", {})
+        max_loops = int(revision_config.get("max_loops", 2))
+        search_on_missing = bool(revision_config.get("search_on_missing", True))
+
+        evaluator_cls = self._load_class(
+            "ai_integration.agent4_evaluator.evaluator", "EvaluatorAgent",
+        )
+
+        # Initial answer generation
         agent = self._build_answer_agent()
-        response = agent.run(state["cleaned_query"], state.get("context_docs", []), state.get("metadata", {}))
+        response = agent.run(
+            state["cleaned_query"],
+            state.get("context_docs", []),
+            state.get("metadata", {}),
+        )
         state["response"] = response
         state["final_output"] = response
         state["messages"].append({"role": "assistant", "content": response})
         state["tool_calls"].append({"tool": "AnswerAgent"})
         state["tool_results"].append({"tool": "AnswerAgent", "status": "completed"})
+        self._emit_progress("answering", "AnswerAgent đã trả lời")
+
+        # QA evaluation loop
+        if evaluator_cls is None:
+            return
+
+        for loop_index in range(max_loops):
+            try:
+                evaluator = evaluator_cls()
+                verdict_result = evaluator.evaluate_structured(
+                    query=state["cleaned_query"],
+                    context_docs=state.get("context_docs", []),
+                    response=state["final_output"],
+                )
+                shared_memory.set_evaluator_verdict(verdict_result)
+                state["tool_calls"].append({"tool": "EvaluatorAgent", "mode": "qa"})
+                state["tool_results"].append(
+                    {
+                        "tool": "EvaluatorAgent",
+                        "status": "completed",
+                        "verdict": verdict_result["verdict"],
+                        "loop": loop_index + 1,
+                    },
+                )
+                state["artifacts"]["evaluator_report"] = verdict_result["evaluation_markdown"]
+                state["workflow_steps"].append(
+                    f"qa_evaluated:{verdict_result['verdict']}:loop_{loop_index + 1}",
+                )
+                self._emit_progress(
+                    f"qa_eval_loop_{loop_index + 1}",
+                    f"QA Evaluator: {verdict_result['verdict']} (loop {loop_index + 1})",
+                )
+
+                if verdict_result["verdict"] == "PASS":
+                    break
+
+                # Search for additional context if missing topics detected
+                if search_on_missing and verdict_result.get("missing_topics"):
+                    missing = verdict_result["missing_topics"]
+                    search_query = f"{state['cleaned_query']}\n{' '.join(str(t) for t in missing[:3])}"
+                    search_docs = self._search_for_context(search_query)
+                    if search_docs:
+                        merged = self._deduplicate_documents(
+                            state.get("context_docs", []) + search_docs,
+                        )
+                        state["context_docs"] = merged
+                        shared_memory.set_retrieval_docs(merged)
+                        state["workflow_steps"].append("qa_searched_additional_context")
+
+                # Regenerate answer with improved context
+                agent = self._build_answer_agent()
+                response = agent.run(
+                    state["cleaned_query"],
+                    state.get("context_docs", []),
+                    state.get("metadata", {}),
+                )
+                state["response"] = response
+                state["final_output"] = response
+                state["messages"].append({"role": "assistant", "content": response})
+                state["tool_calls"].append({"tool": "AnswerAgent", "loop": loop_index + 1})
+                state["tool_results"].append(
+                    {"tool": "AnswerAgent", "status": "completed", "loop": loop_index + 1},
+                )
+                shared_memory.increment_revision_count()
+
+            except Exception as exc:
+                state["errors"].append(f"qa_evaluator_error: {exc}")
+                break
+        else:
+            state["workflow_steps"].append(
+                f"qa_evaluation_limit_reached:max_loops={max_loops}",
+            )
 
     def _run_advisor_agent(self, state: dict[str, Any]) -> None:
         shared_memory: ShortTermMemory = state["shared_memory"]
@@ -329,9 +428,15 @@ class PlanningOrchestrator:
             state["errors"].append("critic_agent_skipped_missing_advisor_report")
 
     def _run_evaluator_agent(self, state: dict[str, Any]) -> None:
-        if state["artifacts"].get("evaluator_report"):
+        shared_memory: ShortTermMemory = state["shared_memory"]
+        verdict = shared_memory.get_evaluator_verdict()
+        if state["artifacts"].get("evaluator_report") or verdict:
             state["tool_calls"].append({"tool": "EvaluatorAgent"})
-            state["tool_results"].append({"tool": "EvaluatorAgent", "status": "completed"})
+            state["tool_results"].append({
+                "tool": "EvaluatorAgent",
+                "status": "completed",
+                "verdict": verdict.get("verdict", "N/A") if verdict else "N/A",
+            })
         elif not state.get("report"):
             state["errors"].append("evaluator_agent_skipped_missing_advisor_report")
 
@@ -348,15 +453,33 @@ class PlanningOrchestrator:
         metadata: dict[str, Any],
         shared_memory: ShortTermMemory,
     ) -> dict[str, Any]:
+        """Run the full deep-advice pipeline with a revision loop.
+
+        Flow
+        ----
+        1. Advisor produces report **v1**.
+        2. **Revision loop** (up to *max_loops* iterations):
+           a. Critic reviews the latest advisor report.
+           b. Advisor revises the report using Critic (+ optional Evaluator) feedback.
+           c. Evaluator produces a structured PASS/FAIL verdict.
+           d. If PASS → break early.
+           e. If missing topics detected → SearchAgent fetches more context.
+        3. Return the latest (best) advisor report.
+
+        All intermediate results are written to *shared_memory* so that
+        every agent can read from the shared four-compartment store.
+        """
         workflow_steps: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         tool_results: list[dict[str, Any]] = []
         errors: list[str] = []
         artifacts: dict[str, Any] = {}
 
+        revision_config = self.config.get("revision", {})
+        max_loops = int(revision_config.get("max_loops", 2))
+        search_on_missing = bool(revision_config.get("search_on_missing", True))
+
         advisor_report = None
-        critic_report = None
-        evaluator_report = None
 
         advisor_cls = self._load_class("ai_integration.agent2_advisor.advisor", "AdvisorAgent")
         critic_cls = self._load_class("ai_integration.agent3_critic.critic", "CriticAgent")
@@ -375,14 +498,17 @@ class PlanningOrchestrator:
                 "final_output": final_output,
             }
 
-        # --- Advisor (v1) ---
+        # ── Advisor v1 ──────────────────────────────────────────────────
         try:
             advisor = self._build_advisor_agent(advisor_cls)
             advisor_report = advisor.run(query, context_docs)
-            context_docs = self._deduplicate_documents(getattr(advisor, "current_context_docs", context_docs))
+            context_docs = self._deduplicate_documents(
+                getattr(advisor, "current_context_docs", context_docs),
+            )
             delegated_events = list(getattr(advisor, "delegated_context_events", []))
-            workflow_steps.append("advisor_completed")
-            tool_calls.append({"tool": "AdvisorAgent"})
+            workflow_steps.append("advisor_v1_completed")
+            self._emit_progress("advisor_v1", "Advisor v1 hoàn thành")
+            tool_calls.append({"tool": "AdvisorAgent", "version": "v1"})
             if delegated_events:
                 workflow_steps.append("advisor_delegated_context_retrieval")
                 tool_calls.append({"tool": "AdvisorAgent.request_additional_context"})
@@ -390,11 +516,13 @@ class PlanningOrchestrator:
                 {
                     "tool": "AdvisorAgent",
                     "status": "completed",
+                    "version": "v1",
                     "context_document_count": len(context_docs),
                     "delegated_context_events": delegated_events,
-                }
+                },
             )
             artifacts["advisor_report"] = advisor_report
+            artifacts["advisor_report_v1"] = advisor_report
             artifacts["advisor_context_events"] = delegated_events
             shared_memory.set_retrieval_docs(context_docs)
             shared_memory.set_advisor_report(advisor_report, version_label="v1")
@@ -411,42 +539,161 @@ class PlanningOrchestrator:
                 "final_output": final_output,
             }
 
-        # --- Critic ---
-        if critic_cls is not None:
-            try:
-                critic = critic_cls()
-                critic_report = critic.run(query, context_docs, advisor_report)
-                workflow_steps.append("critic_completed")
-                tool_calls.append({"tool": "CriticAgent"})
-                tool_results.append({"tool": "CriticAgent", "status": "completed"})
-                artifacts["critic_report"] = critic_report
-                shared_memory.set_critic_argument(
-                    critique=critic_report,
-                    issues=self._extract_issues_from_critique(critic_report),
-                )
-            except Exception as exc:
-                errors.append(f"critic_agent_error: {exc}")
+        # ── Revision loop: Critic → Advisor revision → Evaluator ────────
+        for loop_index in range(max_loops):
+            loop_label = f"loop_{loop_index + 1}"
 
-        # --- Evaluator (reads from shared memory) ---
-        if evaluator_cls is not None:
-            try:
-                evaluator = evaluator_cls()
-                critic_arg = shared_memory.get_critic_argument()
-                advisor_latest = shared_memory.get_advisor_report()  # latest version
-                advisor_v1 = shared_memory.get_advisor_report("v1")
-                evaluator_report = evaluator.run(
-                    query,
-                    context_docs,
-                    response=advisor_v1 or advisor_report,
-                    critic_issues=critic_arg.get("critique"),
-                    advisor_report_v2=advisor_latest if advisor_latest != advisor_v1 else None,
-                )
-                workflow_steps.append("evaluator_completed")
-                tool_calls.append({"tool": "EvaluatorAgent"})
-                tool_results.append({"tool": "EvaluatorAgent", "status": "completed"})
-                artifacts["evaluator_report"] = evaluator_report
-            except Exception as exc:
-                errors.append(f"evaluator_agent_error: {exc}")
+            # ── Critic ──────────────────────────────────────────────────
+            if critic_cls is not None:
+                try:
+                    critic = critic_cls()
+                    advisor_latest = shared_memory.get_advisor_report() or advisor_report
+                    critic_report = critic.run(query, context_docs, advisor_latest)
+                    workflow_steps.append(f"critic_completed:{loop_label}")
+                    self._emit_progress(f"critic_{loop_label}", f"Critic đã review ({loop_label})")
+                    tool_calls.append({"tool": "CriticAgent", "loop": loop_label})
+                    tool_results.append(
+                        {"tool": "CriticAgent", "status": "completed", "loop": loop_label},
+                    )
+                    artifacts["critic_report"] = critic_report
+                    shared_memory.set_critic_argument(
+                        critique=critic_report,
+                        issues=self._extract_issues_from_critique(critic_report),
+                    )
+                except Exception as exc:
+                    errors.append(f"critic_agent_error:{loop_label}: {exc}")
+
+            # ── Advisor revision ────────────────────────────────────────
+            critic_arg = shared_memory.get_critic_argument()
+            critic_feedback = critic_arg.get("critique", "")
+
+            if critic_feedback:
+                try:
+                    evaluator_verdict = shared_memory.get_evaluator_verdict()
+                    evaluator_feedback = (
+                        evaluator_verdict.get("evaluation_markdown")
+                        if evaluator_verdict
+                        else None
+                    )
+                    advisor_latest = shared_memory.get_advisor_report() or advisor_report
+                    advisor_for_revision = self._build_advisor_agent(advisor_cls)
+                    revised_report = advisor_for_revision.revise_with_feedback(
+                        query=query,
+                        context_docs=context_docs,
+                        current_report=advisor_latest,
+                        critic_feedback=critic_feedback,
+                        evaluator_feedback=evaluator_feedback,
+                    )
+                    context_docs = self._deduplicate_documents(
+                        getattr(advisor_for_revision, "current_context_docs", context_docs),
+                    )
+                    version_label = f"v{loop_index + 2}"
+                    shared_memory.set_advisor_report(revised_report, version_label=version_label)
+                    shared_memory.set_retrieval_docs(context_docs)
+                    advisor_report = revised_report
+                    artifacts["advisor_report"] = revised_report
+                    artifacts[f"advisor_report_{version_label}"] = revised_report
+                    workflow_steps.append(f"advisor_revised:{version_label}:{loop_label}")
+                    self._emit_progress(f"advisor_{version_label}", f"Advisor đã sửa → {version_label}")
+                    tool_calls.append(
+                        {"tool": "AdvisorAgent", "version": version_label, "loop": loop_label},
+                    )
+                    tool_results.append(
+                        {
+                            "tool": "AdvisorAgent",
+                            "status": "completed",
+                            "version": version_label,
+                            "loop": loop_label,
+                            "context_document_count": len(context_docs),
+                        },
+                    )
+                except Exception as exc:
+                    errors.append(f"advisor_revision_error:{loop_label}: {exc}")
+
+            # ── Evaluator (structured verdict) ──────────────────────────
+            if evaluator_cls is not None:
+                try:
+                    evaluator = evaluator_cls()
+                    advisor_v1 = shared_memory.get_advisor_report("v1")
+                    advisor_latest = shared_memory.get_advisor_report()
+                    critic_arg = shared_memory.get_critic_argument()
+
+                    verdict_result = evaluator.evaluate_structured(
+                        query=query,
+                        context_docs=context_docs,
+                        response=advisor_v1 or advisor_report,
+                        critic_issues=critic_arg.get("critique"),
+                        advisor_report_v2=(
+                            advisor_latest if advisor_latest != advisor_v1 else None
+                        ),
+                    )
+                    shared_memory.set_evaluator_verdict(verdict_result)
+                    artifacts["evaluator_report"] = verdict_result["evaluation_markdown"]
+                    artifacts[f"evaluator_verdict_{loop_label}"] = verdict_result["verdict"]
+                    workflow_steps.append(
+                        f"evaluator_completed:{verdict_result['verdict']}:{loop_label}",
+                    )
+                    self._emit_progress(
+                        f"evaluator_{loop_label}",
+                        f"Evaluator: {verdict_result['verdict']} ({loop_label})",
+                    )
+                    tool_calls.append({"tool": "EvaluatorAgent", "loop": loop_label})
+                    tool_results.append(
+                        {
+                            "tool": "EvaluatorAgent",
+                            "status": "completed",
+                            "verdict": verdict_result["verdict"],
+                            "loop": loop_label,
+                        },
+                    )
+
+                    # ── Check verdict ────────────────────────────────────
+                    if verdict_result["verdict"] == "PASS":
+                        workflow_steps.append(f"revision_passed:{loop_label}")
+                        self._emit_progress("revision_passed", f"Đánh giá PASS ✓ ({loop_label})")
+                        break
+
+                    # ── Search for missing context if needed ────────────
+                    if search_on_missing and verdict_result.get("missing_topics"):
+                        missing = verdict_result["missing_topics"]
+                        search_query = (
+                            f"{query}\n{' '.join(str(t) for t in missing[:3])}"
+                        )
+                        search_docs = self._search_for_context(search_query)
+                        if search_docs:
+                            merged = self._deduplicate_documents(
+                                context_docs + search_docs,
+                            )
+                            context_docs = merged
+                            shared_memory.set_retrieval_docs(merged)
+                            workflow_steps.append(
+                                f"searched_missing_context:{loop_label}",
+                            )
+                            tool_calls.append(
+                                {
+                                    "tool": "SearchAgent",
+                                    "loop": loop_label,
+                                    "reason": "missing_topics",
+                                },
+                            )
+                            tool_results.append(
+                                {
+                                    "tool": "SearchAgent",
+                                    "status": "completed",
+                                    "loop": loop_label,
+                                    "added_docs": len(search_docs),
+                                },
+                            )
+
+                except Exception as exc:
+                    errors.append(f"evaluator_agent_error:{loop_label}: {exc}")
+
+            shared_memory.increment_revision_count()
+        else:
+            # Loop exhausted without a PASS verdict
+            workflow_steps.append(
+                f"revision_limit_reached:max_loops={max_loops}",
+            )
 
         return {
             "workflow_steps": workflow_steps,
@@ -457,7 +704,10 @@ class PlanningOrchestrator:
             "advisor_report": advisor_report,
             "final_output": advisor_report or self._deep_advice_fallback(query, context_docs),
             "context_docs": context_docs,
-            "coverage_score": min(1.0, len(context_docs) / max(int(self.config.get("top_k", 5)), 1)),
+            "coverage_score": min(
+                1.0,
+                len(context_docs) / max(int(self.config.get("top_k", 5)), 1),
+            ),
         }
 
     def _build_advisor_agent(self, advisor_cls):
@@ -566,6 +816,7 @@ class PlanningOrchestrator:
         return SearchingAgent(
             coverage_threshold=float(self.config.get("search_coverage_threshold", 0.4)),
             max_iterations=int(self.config.get("search_max_iterations", 1)),
+            top_k=int(self.config.get("search_top_k", 10)),
         )
     def _build_retrieval_agent(self) -> RetrievalAgent:
         return RetrievalAgent(self.config, DEFAULT_RAW_DIR)
@@ -749,8 +1000,12 @@ class PlanningOrchestrator:
         return unique
 
 
-def run_agent_state(query: str, memory: dict[str, Any] | None = None) -> dict[str, Any]:
-    orchestrator = PlanningOrchestrator()
+def run_agent_state(
+    query: str,
+    memory: dict[str, Any] | None = None,
+    progress_callback=None,
+) -> dict[str, Any]:
+    orchestrator = PlanningOrchestrator(progress_callback=progress_callback)
     return orchestrator.run(query, memory)
 
 

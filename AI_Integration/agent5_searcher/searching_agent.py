@@ -4,6 +4,7 @@ import dotenv
 import os
 from ai_integration.tools.report_search_tool import report_search_tool
 from ai_integration.entity_filter import filter_documents_for_query_entity
+from ai_integration.agent5_searcher.search_reranker import rerank_search_results
 import json
 
 api_key = os.getenv("OPENAI_API_KEY") or dotenv.get_key(".env", "OPENAI_API_KEY")
@@ -17,11 +18,12 @@ with open(SKILL_PATH, "r") as f:
         SKILL_CONTEXT = f.read()
 
 class SearchingAgent:
-    def __init__(self,coverage_threshold=0.4,max_iterations=1):
+    def __init__(self,coverage_threshold=0.4,max_iterations=1,top_k=10):
         self.client = OpenAI(api_key = api_key)
         self.report_search_tool = report_search_tool
         self.coverage_threshold = coverage_threshold
         self.max_iterations = max_iterations
+        self.top_k = top_k
         self.skill_context = SKILL_CONTEXT
 
     def identify_missing_information(self, user_query, documents):
@@ -85,6 +87,7 @@ class SearchingAgent:
     def run(self,user_query,initial_documents):
         documents = initial_documents if initial_documents else []
         iteration = 0
+        original_query = user_query
         while iteration < self.max_iterations:
             coverage = self._coverage(user_query, documents)
             if coverage >= self.coverage_threshold:
@@ -102,4 +105,15 @@ class SearchingAgent:
             new_documents = self.retrieve_documents(queries, user_query)
             documents.extend(new_documents)
             iteration += 1
-        return filter_documents_for_query_entity(user_query, documents)
+
+        # Apply entity filter first
+        filtered = filter_documents_for_query_entity(original_query, documents)
+
+        # Hybrid rerank: chunk → embed (free local model) → top K
+        top_k_chunks = rerank_search_results(
+            query=original_query,
+            raw_documents=filtered,
+            top_k=self.top_k,
+        )
+
+        return top_k_chunks if top_k_chunks else filtered
