@@ -471,7 +471,13 @@ CONTENT TO ANALYZE:
             prompt_text += "\n"
         
         prompt_text += """
-    Please provide a clear, comprehensive answer using the text above. If the documents don't contain sufficient information to answer the question, say "I don't have enough information to answer that question based on the provided documents."
+CRITICAL RULES FOR NUMBERS AND FINANCIAL DATA:
+- ONLY use exact figures that appear verbatim in the documents above. Do NOT approximate, round, or recall numbers from your training knowledge.
+- If a specific number is not present in the documents, explicitly state "Data not available in provided documents" for that metric — do NOT substitute with estimated or rounded values.
+- Quote financial figures exactly as they appear (e.g. if the document says "$97.69 billion", do not simplify to "$98 billion" or "$100 billion").
+- Never infer or interpolate missing data from context or general knowledge.
+
+Please provide a clear, comprehensive answer using the text above. If the documents don't contain sufficient information to answer the question, say "I don't have enough information to answer that question based on the provided documents."
 
 ANSWER:"""
 

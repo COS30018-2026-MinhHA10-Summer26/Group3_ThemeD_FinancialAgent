@@ -29,6 +29,35 @@ def _parse_numeric_value(val: Any) -> float:
         return float(val)
     if not val:
         return 0.0
+
+
+    def _format_display_number(val: Any) -> str:
+        """Format a numeric value for display without forcing unnecessary rounding.
+
+        - Preserve integer appearance for whole numbers (e.g. 800000 -> "800,000").
+        - For floats, show up to 6 decimal places but strip trailing zeros.
+        - Non-numeric values are returned as-is or as "N/A" when falsy.
+        """
+        if val is None:
+            return "N/A"
+        if isinstance(val, (int,)):
+            return f"{val:,}"
+        if isinstance(val, float):
+            # If effectively an integer, show without decimals
+            if val.is_integer():
+                return f"{int(val):,}"
+            # Otherwise show up to 6 decimals, but trim trailing zeros
+            s = f"{val:,.6f}".rstrip('0').rstrip('.')
+            return s
+        # Try to coerce strings that look numeric
+        try:
+            f = float(str(val).replace(',', '').strip())
+            if f.is_integer():
+                return f"{int(f):,}"
+            s = f"{f:,.6f}".rstrip('0').rstrip('.')
+            return s
+        except Exception:
+            return str(val) if val else "N/A"
     
     # Convert to string and clean
     s = str(val).strip()
@@ -252,24 +281,26 @@ def comparison_tool(
     for metric in all_metrics:
         val_a = data_a.get(metric)
         val_b = data_b.get(metric)
-        
-        # Format values
-        str_a = f"{val_a:,.2f}" if isinstance(val_a, (int, float)) else str(val_a or "N/A")
-        str_b = f"{val_b:,.2f}" if isinstance(val_b, (int, float)) else str(val_b or "N/A")
-        
+
+        # Format values using the display helper to avoid forced two-decimal rounding
+        str_a = _format_display_number(val_a) if isinstance(val_a, (int, float)) or (val_a and str(val_a).strip()) else "N/A"
+        str_b = _format_display_number(val_b) if isinstance(val_b, (int, float)) or (val_b and str(val_b).strip()) else "N/A"
+
         abs_diff_str = "N/A"
         pct_diff_str = "N/A"
-        
+
         if isinstance(val_a, (int, float)) and isinstance(val_b, (int, float)):
             abs_diff = val_a - val_b
-            abs_diff_str = f"{abs_diff:+,.2f}"
-            
+            sign = "+" if abs_diff >= 0 else "-"
+            abs_formatted = _format_display_number(abs(abs_diff))
+            abs_diff_str = f"{sign}{abs_formatted}"
+
             if val_b != 0:
                 pct_diff = (abs_diff / val_b) * 100
                 pct_diff_str = f"{pct_diff:+.2f}%"
             else:
                 pct_diff_str = "+inf%"
-                
+
         lines.append(f"| {metric} | {str_a} | {str_b} | {abs_diff_str} | {pct_diff_str} |")
         
     return "\n".join(lines)
