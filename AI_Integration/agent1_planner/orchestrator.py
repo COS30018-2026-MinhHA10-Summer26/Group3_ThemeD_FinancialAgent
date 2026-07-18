@@ -13,7 +13,7 @@ import importlib
 import json
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -87,9 +87,14 @@ Return JSON in this shape:
 class PlanningOrchestrator:
     """Classifier + planner + executor for the financial agent stack."""
 
-    def __init__(self, progress_callback=None) -> None:
+    def __init__(
+        self,
+        progress_callback=None,
+        context_searcher: Callable[[str], list[dict[str, Any]]] | None = None,
+    ) -> None:
         self.config = self._load_config()
         self._progress_callback = progress_callback
+        self._context_searcher = context_searcher
 
     def _emit_progress(self, step: str, message: str) -> None:
         """Send a progress update to the caller if a callback is registered."""
@@ -108,10 +113,10 @@ class PlanningOrchestrator:
         cleaned_query = query.strip()
         decision = self.classify_query(cleaned_query)
         workflow_steps.append(f"classified:{decision['route']}")
-        self._emit_progress("classifying", f"Phân loại: {decision['route']}")
+        self._emit_progress("classifying", f"Classifying: {decision['route']}")
         plan = self.plan_query(cleaned_query, decision)
         workflow_steps.append("planned_workflow")
-        self._emit_progress("planning", "Đã lên kế hoạch workflow")
+        self._emit_progress("planning", "Workflow planned")
 
         # Initialise per-request shared memory
         shared_memory = ShortTermMemory()
@@ -207,10 +212,10 @@ class PlanningOrchestrator:
                 continue
             state["executed_agents"].append(agent_name)
             state["workflow_steps"].append(f"agent_started:{agent_name}")
-            self._emit_progress(f"agent_{agent_name}", f"{agent_name} đang chạy...")
+            self._emit_progress(f"agent_{agent_name}", f"{agent_name} is running...")
             self._execute_agent_step(agent_name, state, memory)
             state["workflow_steps"].append(f"agent_completed:{agent_name}")
-            self._emit_progress(f"agent_{agent_name}_done", f"{agent_name} hoàn thành")
+            self._emit_progress(f"agent_{agent_name}_done", f"{agent_name} completed")
             if agent_name == "SkipAgent":
                 break
 
@@ -279,14 +284,26 @@ class PlanningOrchestrator:
         state["workflow_steps"].extend(result.get("workflow_steps", []))
         state["errors"].extend(result.get("errors", []))
         state["metadata"].update(result.get("metadata", {}))
+        self._emit_progress(
+            "retrieving",
+            f"{len(state['context_docs'])} related docs found",
+        )
 
         # Sync to shared memory
         shared_memory: ShortTermMemory = state["shared_memory"]
         shared_memory.set_retrieval_docs(state["context_docs"])
 
     def _run_search_agent(self, state: dict[str, Any]) -> None:
-        agent = self._build_search_agent()
-        search_docs = agent.run(state["cleaned_query"], state.get("context_docs", []))
+        if self._context_searcher is not None:
+            search_docs = self._context_searcher(state["cleaned_query"])
+            search_docs = filter_documents_for_query_entity(
+                state["cleaned_query"],
+                search_docs,
+                state.get("metadata", {}),
+            )
+        else:
+            agent = self._build_search_agent()
+            search_docs = agent.run(state["cleaned_query"], state.get("context_docs", []))
         merged_docs = self._deduplicate_documents(state.get("context_docs", []) + search_docs)
         state["context_docs"] = merged_docs
         top_k = int(self.config.get("top_k", 5))
@@ -306,12 +323,40 @@ class PlanningOrchestrator:
         revision_config = self.config.get("revision", {})
         max_loops = int(revision_config.get("max_loops", 2))
         search_on_missing = bool(revision_config.get("search_on_missing", True))
+        retrieval_threshold = float(self.config.get("retrieval_threshold", 0.25))
 
         evaluator_cls = self._load_class(
             "ai_integration.agent4_evaluator.evaluator", "EvaluatorAgent",
         )
 
         # Initial answer generation
+        # AnswerAgent consumes exactly the context written by the preceding
+        # retrieval/search agents into request-scoped shared memory.
+        memory_docs = shared_memory.get_retrieval_docs()
+        if memory_docs:
+            state["context_docs"] = self._deduplicate_documents(memory_docs)
+
+        if state.get("route") == "qa" and (
+            not state.get("context_docs")
+            or float(state.get("coverage_score", 0.0)) < retrieval_threshold
+        ):
+            response = (
+                f"I do not have enough information to answer this question reliably: {state['cleaned_query']}\n\n"
+                "Please provide more relevant source documents or ask a narrower finance question."
+            )
+            state["response"] = response
+            state["final_output"] = response
+            state["messages"].append({"role": "assistant", "content": response})
+            state["tool_calls"].append({"tool": "AnswerAgent", "status": "insufficient_information"})
+            state["tool_results"].append({
+                "tool": "AnswerAgent",
+                "status": "insufficient_information",
+                "document_count": len(state.get("context_docs", [])),
+                "coverage_score": float(state.get("coverage_score", 0.0)),
+            })
+            self._emit_progress("answering", "QA does not have enough information to answer")
+            return
+
         agent = self._build_answer_agent()
         response = agent.run(
             state["cleaned_query"],
@@ -322,10 +367,27 @@ class PlanningOrchestrator:
         state["final_output"] = response
         state["messages"].append({"role": "assistant", "content": response})
         state["tool_calls"].append({"tool": "AnswerAgent"})
-        state["tool_results"].append({"tool": "AnswerAgent", "status": "completed"})
+        answer_error = getattr(agent, "last_error", None)
+        if answer_error:
+            state["errors"].append(str(answer_error))
+        state["tool_results"].append({
+            "tool": "AnswerAgent",
+            "status": "fallback" if answer_error else "completed",
+            "context_source": "shared_memory.retrieval_docs",
+            "document_count": len(state["context_docs"]),
+        })
         self._emit_progress("answering", "AnswerAgent đã trả lời")
 
+        # A model/configuration failure cannot be improved by the evaluator
+        # loop. Return the explicit fallback and preserve the error in state.
+        if answer_error:
+            state["workflow_steps"].append("answer_generation_fallback")
+            return
+
         # QA evaluation loop
+        if state.get("route") == "qa":
+            return
+
         if evaluator_cls is None:
             return
 
@@ -373,6 +435,9 @@ class PlanningOrchestrator:
                         state["workflow_steps"].append("qa_searched_additional_context")
 
                 # Regenerate answer with improved context
+                memory_docs = shared_memory.get_retrieval_docs()
+                if memory_docs:
+                    state["context_docs"] = self._deduplicate_documents(memory_docs)
                 agent = self._build_answer_agent()
                 response = agent.run(
                     state["cleaned_query"],
@@ -384,8 +449,16 @@ class PlanningOrchestrator:
                 state["messages"].append({"role": "assistant", "content": response})
                 state["tool_calls"].append({"tool": "AnswerAgent", "loop": loop_index + 1})
                 state["tool_results"].append(
-                    {"tool": "AnswerAgent", "status": "completed", "loop": loop_index + 1},
+                    {
+                        "tool": "AnswerAgent",
+                        "status": "fallback" if getattr(agent, "last_error", None) else "completed",
+                        "loop": loop_index + 1,
+                        "context_source": "shared_memory.retrieval_docs",
+                        "document_count": len(state["context_docs"]),
+                    },
                 )
+                if getattr(agent, "last_error", None):
+                    state["errors"].append(str(agent.last_error))
                 shared_memory.increment_revision_count()
 
             except Exception as exc:
@@ -852,6 +925,10 @@ class PlanningOrchestrator:
             required_information = []
         required_information = [str(item) for item in required_information if str(item).strip()]
 
+        normalized_route = str(plan.get("route", route)).strip()
+        if normalized_route not in {"skip", "qa", "deep_advice"}:
+            normalized_route = route
+
         workflow = plan.get("workflow", [])
         normalized_workflow: list[dict[str, Any]] = []
         if isinstance(workflow, list):
@@ -861,6 +938,11 @@ class PlanningOrchestrator:
                 agent = str(step.get("agent", "")).strip()
                 if not agent:
                     continue
+
+                # If the route is 'qa', we only allow RetrievalAgent and AnswerAgent
+                if normalized_route == "qa" and agent not in {"RetrievalAgent", "AnswerAgent"}:
+                    continue
+
                 normalized_step: dict[str, Any] = {
                     "step": int(step.get("step", index)),
                     "agent": agent,
@@ -868,10 +950,6 @@ class PlanningOrchestrator:
                 if step.get("condition"):
                     normalized_step["condition"] = str(step["condition"])
                 normalized_workflow.append(normalized_step)
-
-        normalized_route = str(plan.get("route", route)).strip()
-        if normalized_route not in {"skip", "qa", "deep_advice"}:
-            normalized_route = route
 
         return {
             "route": normalized_route,
@@ -923,8 +1001,7 @@ class PlanningOrchestrator:
                 "required_information": ["relevant filings or market context", "supporting evidence for the answer"],
                 "workflow": [
                     {"step": 1, "agent": "RetrievalAgent"},
-                    {"step": 2, "agent": "SearchAgent", "condition": "coverage_score < 0.9"},
-                    {"step": 3, "agent": "AnswerAgent"},
+                    {"step": 2, "agent": "AnswerAgent"},
                 ],
             }
         return {
@@ -958,6 +1035,12 @@ class PlanningOrchestrator:
             return yaml.safe_load(file) or {"top_k": 5}
 
     def _search_for_context(self, query: str) -> list[dict[str, Any]]:
+        if self._context_searcher is not None:
+            try:
+                return self._context_searcher(query)
+            except Exception:
+                return []
+
         try:
             module = importlib.import_module("ai_integration.tools.report_search_tool")
             report_search_tool = module.report_search_tool
@@ -965,21 +1048,37 @@ class PlanningOrchestrator:
         except Exception:
             return []
 
-        docs: list[dict[str, Any]] = []
+        raw_docs: list[dict[str, Any]] = []
         sources = result.get("sources", [])
         texts = result.get("synthetic_results", [])
-        for index, text in enumerate(texts):
-            source = sources[index]["url"] if index < len(sources) else f"search_result_{index + 1}"
-            docs.append(
-                {
-                    "text": str(text)[:4000],
-                    "content": str(text)[:4000],
+        for index, item in enumerate(texts):
+            if isinstance(item, dict):
+                text_content = str(item.get("text", item.get("content", ""))).strip()
+                source = item.get("source") or (sources[index]["url"] if index < len(sources) else f"search_result_{index + 1}")
+                page = item.get("page", 1)
+            else:
+                text_content = str(item).strip()
+                source = sources[index]["url"] if index < len(sources) else f"search_result_{index + 1}"
+                page = 1
+
+            if text_content:
+                raw_docs.append({
+                    "text": text_content,
                     "source": source,
-                    "page": 1,
-                    "score": 0.0,
-                }
-            )
-        return filter_documents_for_query_entity(query, docs)
+                    "page": page,
+                })
+
+        filtered_docs = filter_documents_for_query_entity(query, raw_docs)
+
+        # Rerank to keep the context size small
+        try:
+            reranker_module = importlib.import_module("ai_integration.agent5_searcher.search_reranker")
+            rerank_search = reranker_module.rerank_search_results
+            top_k = int(self.config.get("top_k", 2))
+            return rerank_search(query, filtered_docs, top_k=top_k)
+        except Exception as e:
+            print(f"Reranking failed in _search_for_context: {e}")
+            return filtered_docs[:2]
 
     def _deduplicate_documents(self, documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen: set[tuple[str, str]] = set()
@@ -1004,8 +1103,12 @@ def run_agent_state(
     query: str,
     memory: dict[str, Any] | None = None,
     progress_callback=None,
+    context_searcher: Callable[[str], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    orchestrator = PlanningOrchestrator(progress_callback=progress_callback)
+    orchestrator = PlanningOrchestrator(
+        progress_callback=progress_callback,
+        context_searcher=context_searcher,
+    )
     return orchestrator.run(query, memory)
 
 

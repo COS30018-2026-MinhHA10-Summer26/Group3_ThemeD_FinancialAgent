@@ -1,3 +1,7 @@
+import asyncio
+import base64
+import json
+import queue
 from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
@@ -5,10 +9,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import selectinload
+from starlette.responses import StreamingResponse
 
 from api.deps import db_dependency, get_current_user
 from api.generate_answer import answer_query
 from api.ingestion.pdf_chat_processor import process_pdf_for_chat
+from api.multi_agent_handler import run_multi_agent_chat
 from api.models import DEFAULT_EMBEDDING_MODEL, DEFAULT_LLM_MODEL, Conversation, Message, MessageRole, Project, User, project_members
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -80,6 +86,7 @@ class MessageRead(BaseModel):
     conversation_id: UUID
     role: str
     content: str
+    agent_run_log: dict | None = None
     created_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -91,6 +98,7 @@ class ChatResponse(BaseModel):
     answer: str
     query_variations: list[str]
     sources: list[dict]
+    agent_run_log: dict | None = None
     user_message: MessageRead
     assistant_message: MessageRead
 
@@ -206,6 +214,7 @@ def message_to_read(message: Message) -> MessageRead:
         conversation_id=message.conversation_id,
         role=message.role.value if getattr(message, "role", None) else "user",
         content=message.content,
+        agent_run_log=message.agent_run_log,
         created_at=message.created_at,
     )
 
@@ -398,7 +407,6 @@ async def send_conversation_message(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Image too large (max 10MB)",
             )
-        import base64
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
     # Process optional PDF upload (temporary, in-memory)
@@ -438,6 +446,7 @@ async def send_conversation_message(
         conversation_id=conversation.conversation_id,
         role=MessageRole.ASSISTANT,
         content=rag_result["answer"],
+        agent_run_log=rag_result.get("agent_run_log"),
         created_at=now + timedelta(microseconds=1),
     )
 
@@ -451,6 +460,124 @@ async def send_conversation_message(
         answer=rag_result["answer"],
         query_variations=rag_result.get("query_variations", []),
         sources=rag_result.get("sources", []),
+        agent_run_log=rag_result.get("agent_run_log"),
         user_message=message_to_read(user_message),
         assistant_message=message_to_read(assistant_message),
+    )
+
+
+def _sse_event(event: str, payload: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, default=str)}\n\n"
+
+
+@router.post("/{project_id}/conversations/{conversation_id}/messages/stream")
+async def send_conversation_message_stream(
+    project_id: UUID,
+    conversation_id: UUID,
+    db: db_dependency,
+    query: str = Form(...),
+    image: UploadFile | None = File(None),
+    pdf: UploadFile | None = File(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """Run the project-scoped multi-agent workflow and stream its progress."""
+    project = load_project(db, project_id)
+    require_project_access(project, current_user)
+    conversation = load_conversation(db, project_id, conversation_id)
+
+    query_text = query.strip()
+    if not query_text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Query is required")
+
+    image_base64 = None
+    if image and image.filename:
+        allowed_types = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+        if image.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported image type: {image.content_type}. Allowed: {', '.join(allowed_types)}",
+            )
+        image_bytes = await image.read()
+        if len(image_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image too large (max 10MB)")
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    pdf_chunks = None
+    if pdf and pdf.filename:
+        pdf_filename = pdf.filename or "document.pdf"
+        if pdf.content_type not in {"application/pdf"} and not pdf_filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only PDF files are supported. Please upload a .pdf file.")
+        pdf_bytes = await pdf.read()
+        if len(pdf_bytes) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="PDF too large (max 5MB)")
+        pdf_chunks = process_pdf_for_chat(pdf_bytes, pdf_filename)
+
+    progress_events: queue.Queue[tuple[str, str]] = queue.Queue()
+
+    def emit_progress(step: str, message: str) -> None:
+        progress_events.put((step, message))
+
+    async def event_stream():
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                run_multi_agent_chat,
+                query_text,
+                project_id,
+                conversation_id,
+                image_base64,
+                pdf_chunks,
+                emit_progress,
+            ),
+        )
+        try:
+            while not task.done() or not progress_events.empty():
+                sent_progress = False
+                try:
+                    while True:
+                        step, message = progress_events.get_nowait()
+                        sent_progress = True
+                        yield _sse_event("progress", {"step": step, "message": message})
+                except queue.Empty:
+                    pass
+                if not task.done() and not sent_progress:
+                    await asyncio.sleep(0.08)
+
+            result = await task
+            now = datetime.utcnow()
+            user_message = Message(
+                conversation_id=conversation.conversation_id,
+                role=MessageRole.USER,
+                content=query_text,
+                created_at=now,
+            )
+            assistant_message = Message(
+                conversation_id=conversation.conversation_id,
+                role=MessageRole.ASSISTANT,
+                content=result["answer"],
+                agent_run_log=result.get("agent_run_log"),
+                created_at=now + timedelta(microseconds=1),
+            )
+            db.add(user_message)
+            db.add(assistant_message)
+            db.commit()
+            db.refresh(user_message)
+            db.refresh(assistant_message)
+
+            response = ChatResponse(
+                answer=result["answer"],
+                query_variations=result.get("query_variations", []),
+                sources=result.get("sources", []),
+                agent_run_log=result.get("agent_run_log"),
+                user_message=message_to_read(user_message),
+                assistant_message=message_to_read(assistant_message),
+            )
+            yield _sse_event("done", response.model_dump(mode="json"))
+        except Exception as exc:
+            db.rollback()
+            yield _sse_event("error", {"detail": f"Multi-agent chat failed: {exc}"})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

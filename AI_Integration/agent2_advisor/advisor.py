@@ -253,6 +253,15 @@ class AdvisorAgent:
                 "documents": [],
             }
 
+        request_key = self._context_request_key(arguments)
+        if any(self._context_request_key(event) == request_key for event in self.delegated_context_events):
+            return {
+                "status": "duplicate",
+                "message": "This additional-context request was already attempted.",
+                "added_document_count": 0,
+                "documents": self._summarize_context_docs(self.current_context_docs),
+            }
+
         result = self.context_provider(self.current_query, self.current_context_docs, arguments)
         new_docs = result.get("context_docs", [])
         if isinstance(new_docs, list):
@@ -275,6 +284,21 @@ class AdvisorAgent:
             "documents": self._summarize_context_docs(new_docs if isinstance(new_docs, list) else []),
             "metadata": event["metadata"],
         }
+
+    @staticmethod
+    def _context_request_key(arguments: Dict[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...], str]:
+        missing_information = arguments.get("missing_information", [])
+        search_queries = arguments.get("search_queries", [])
+        reason = str(arguments.get("reason", "")).strip().lower()
+
+        if not isinstance(missing_information, list):
+            missing_information = [missing_information]
+        if not isinstance(search_queries, list):
+            search_queries = [search_queries]
+
+        normalized_missing = tuple(sorted(str(item).strip().lower() for item in missing_information if str(item).strip()))
+        normalized_queries = tuple(sorted(str(item).strip().lower() for item in search_queries if str(item).strip()))
+        return normalized_missing, normalized_queries, reason
 
     def _summarize_context_docs(self, context_docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         summaries: List[Dict[str, Any]] = []

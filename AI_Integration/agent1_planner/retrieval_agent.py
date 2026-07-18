@@ -30,8 +30,9 @@ class RetrievalAgent:
         errors: list[str] = []
         metadata: dict[str, Any] = {}
 
+        has_supplied_documents = "documents" in memory
         documents = list(memory.get("documents", []))
-        if not documents and self.raw_dir.exists():
+        if not has_supplied_documents and not documents and self.raw_dir.exists():
             try:
                 documents = self._load_documents_from_raw(str(self.raw_dir))
                 workflow_steps.append("loaded_raw_documents")
@@ -43,8 +44,11 @@ class RetrievalAgent:
         retrieved_docs: list[dict[str, Any]] = []
         similarity_score = 0.0
 
+        # Callers that supply documents (for example the API's Supabase
+        # adapter) have already performed retrieval.  Do not silently mix
+        # those project-scoped results with the CLI's local vector index.
         retriever = self._build_retriever()
-        if retriever is not None:
+        if retriever is not None and not has_supplied_documents:
             try:
                 retrieved_docs, _latency = retriever.retrieve(query)
                 retrieved_docs = filter_documents_for_query_entity(
@@ -77,7 +81,7 @@ class RetrievalAgent:
             if matches_query_entity(query, doc, memory.get("metadata", {}))
         ]
         density_score = len(entity_matched_docs) / max(top_k, 1)
-        coverage_score = max(similarity_score, min(1.0, density_score))
+        coverage_score = min(1.0, max(similarity_score, min(1.0, density_score)))
 
         metadata["retrieval_similarity"] = similarity_score
         metadata["retrieval_threshold"] = threshold

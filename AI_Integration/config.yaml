@@ -1,11 +1,11 @@
 embedding_model: all-MiniLM-L6-v2
 chunk_size: 400
 chunk_overlap: 50
-top_k: 5
+top_k: 2
 
 retrieval:
   vector_store_path: data/processed
-  top_k: 5
+  top_k: 2
   score_type: hybrid_rrf
   vector_weight: 0.6
   bm25_weight: 0.4

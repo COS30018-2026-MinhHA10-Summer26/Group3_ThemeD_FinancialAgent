@@ -2,7 +2,7 @@
 
 /* eslint-disable react-hooks/set-state-in-effect */
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, ComponentProps, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { createApiClient, getApiErrorMessage } from "@/lib/api";
@@ -45,17 +45,28 @@ type MessageRow = {
   content: string;
   created_at?: string | null;
   role: "user" | "assistant" | "system" | string;
+  agent_run_log?: AgentRunLog | null;
+};
+
+type AgentRunLog = {
+  route?: string | null;
+  workflow_steps?: string[];
+  executed_agents?: string[];
+  evaluator_verdict?: string | null;
+  errors?: string[];
 };
 
 type ChatResponse = {
   answer: string;
   query_variations: string[];
   sources: Array<Record<string, unknown>>;
+  agent_run_log?: AgentRunLog | null;
   user_message: {
     message_id: string;
     conversation_id: string;
     role: string;
     content: string;
+    agent_run_log?: AgentRunLog | null;
     created_at?: string | null;
   };
   assistant_message: {
@@ -63,9 +74,34 @@ type ChatResponse = {
     conversation_id: string;
     role: string;
     content: string;
+    agent_run_log?: AgentRunLog | null;
     created_at?: string | null;
   };
 };
+
+type MarkdownTableProps = ComponentProps<"table">;
+
+const markdownComponents = {
+  table: ({ children, className, ...props }: MarkdownTableProps) => (
+    <div className="my-4 w-full overflow-x-auto rounded-xl border border-slate-200">
+      <table
+        {...props}
+        className={`min-w-[520px] w-full border-collapse ${className ?? ""}`.trim()}
+      >
+        {children}
+      </table>
+    </div>
+  ),
+};
+
+function normalizeAssistantMarkdown(content: string): string {
+  const trimmed = content.trim();
+  const fencedMarkdownMatch = trimmed.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i);
+  if (fencedMarkdownMatch?.[1]) {
+    return fencedMarkdownMatch[1].trim();
+  }
+  return content;
+}
 
 function decodeToken(token: string): TokenPayload | null {
   try {
@@ -82,14 +118,52 @@ function decodeToken(token: string): TokenPayload | null {
 /* ──────────────────────────────────────────── */
 /*  Typing dots animation for assistant        */
 /* ──────────────────────────────────────────── */
-function TypingIndicator() {
+function AgentProgressIndicator({ message }: { message: string }) {
   return (
     <div className="chat-bubble-assistant animate-chat-fade-in">
       <div className="flex items-center gap-1.5 px-1 py-1">
         <span className="typing-dot" style={{ animationDelay: "0ms" }} />
         <span className="typing-dot" style={{ animationDelay: "150ms" }} />
         <span className="typing-dot" style={{ animationDelay: "300ms" }} />
+        <span className="ml-2 text-xs text-slate-400">{message}</span>
       </div>
+    </div>
+  );
+}
+
+function AgentTracePanel({ log }: { log: AgentRunLog }) {
+  const [expanded, setExpanded] = useState(false);
+  const workflowSteps = log.workflow_steps ?? [];
+  const evaluatorLabel =
+    log.evaluator_verdict === "FAIL" ? "STILL INCOMPLETE" : log.evaluator_verdict;
+
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-2">
+      <button
+        type="button"
+        onClick={() => setExpanded((current) => !current)}
+        className="text-xs text-slate-400 transition hover:text-slate-600"
+      >
+        {expanded ? "▼" : "▶"} Agent Trace ({log.route ?? "workflow"} • {workflowSteps.length} steps)
+      </button>
+      {expanded ? (
+        <div className="mt-2 space-y-1 font-mono text-xs text-slate-500">
+          {workflowSteps.map((step, index) => (
+            <div key={`${step}-${index}`} className="flex gap-2">
+              <span className="text-slate-300">{index + 1}.</span>
+              <span>{step}</span>
+            </div>
+          ))}
+          {log.evaluator_verdict ? (
+            <div className={`mt-2 font-semibold ${log.evaluator_verdict === "PASS" ? "text-emerald-500" : "text-amber-500"}`}>
+              Evaluator: {evaluatorLabel}
+            </div>
+          ) : null}
+          {log.errors?.length ? (
+            <div className="mt-2 text-amber-600">Pipeline notes: {log.errors.join("; ")}</div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -110,6 +184,7 @@ export default function ProjectChatPage() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [progressMessage, setProgressMessage] = useState("Đang chuẩn bị yêu cầu...");
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
@@ -198,6 +273,7 @@ export default function ProjectChatPage() {
               content: string;
               created_at?: string | null;
               role?: string;
+              agent_run_log?: AgentRunLog | null;
             }>
           >(`/projects/${projectId}/conversations/${conversationId}/messages`),
         ]);
@@ -302,7 +378,7 @@ export default function ProjectChatPage() {
     if (pdfInputRef.current) pdfInputRef.current.value = "";
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const prompt = query.trim();
     if (!prompt || sending || !projectId || !conversationId) return;
@@ -310,8 +386,8 @@ export default function ProjectChatPage() {
     const authToken = localStorage.getItem("access_token") ?? (session as { backendToken?: string } | null)?.backendToken ?? "";
     if (!authToken) return;
 
-    const api = createApiClient(authToken);
     setSending(true);
+    setProgressMessage("Request is preparing...");
     setError(null);
 
     const formData = new FormData();
@@ -323,28 +399,73 @@ export default function ProjectChatPage() {
       formData.append("pdf", selectedPdf);
     }
 
-    api
-      .post<ChatResponse>(
-        `/projects/${projectId}/conversations/${conversationId}/messages`,
-        formData,
-        { headers: { "Content-Type": "multipart/form-data" } },
-      )
-      .then((response) => {
-        setMessages((currentMessages) => [
-          ...currentMessages,
-          { ...response.data.user_message },
-          { ...response.data.assistant_message },
-        ]);
-        setQuery("");
-        removeImage();
-        removePdf();
-      })
-      .catch((sendError) => {
-        setError(getApiErrorMessage(sendError, "Failed to send message"));
-      })
-      .finally(() => {
-        setSending(false);
-      });
+    try {
+      const backendUrl = (process.env.NEXT_PUBLIC_BACKEND_URL ?? "").replace(/\/$/, "");
+      const response = await fetch(
+        `${backendUrl}/projects/${projectId}/conversations/${conversationId}/messages/stream`,
+        {
+          method: "POST",
+          body: formData,
+          headers: { Authorization: `Bearer ${authToken}` },
+        },
+      );
+      if (!response.ok || !response.body) {
+        const detail = await response.text();
+        throw new Error(detail || "Failed to start multi-agent chat");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let completed = false;
+
+      const processEvent = (rawEvent: string) => {
+        const lines = rawEvent.split("\n");
+        const eventName = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() ?? "message";
+        const data = lines
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trim())
+          .join("\n");
+        if (!data) return;
+
+        const payload = JSON.parse(data) as ChatResponse | { step?: string; message?: string; detail?: string };
+        if (eventName === "progress") {
+          const rawMessage = (payload as { message?: string }).message ?? "Processing...";
+          setProgressMessage(rawMessage.replace("Evaluator: FAIL", "Evaluator: STILL INCOMPLETE"));
+        } else if (eventName === "done") {
+          const chatResponse = payload as ChatResponse;
+          setMessages((currentMessages) => [
+            ...currentMessages,
+            { ...chatResponse.user_message },
+            { ...chatResponse.assistant_message },
+          ]);
+          setQuery("");
+          removeImage();
+          removePdf();
+          completed = true;
+        } else if (eventName === "error") {
+          throw new Error((payload as { detail?: string }).detail ?? "Multi-agent chat failed");
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done }).replace(/\r/g, "");
+        let separatorIndex = buffer.indexOf("\n\n");
+        while (separatorIndex >= 0) {
+          processEvent(buffer.slice(0, separatorIndex));
+          buffer = buffer.slice(separatorIndex + 2);
+          separatorIndex = buffer.indexOf("\n\n");
+        }
+        if (done) break;
+      }
+      if (buffer.trim()) processEvent(buffer);
+      if (!completed) throw new Error("The multi-agent response ended before completion");
+    } catch (sendError) {
+      setError(getApiErrorMessage(sendError, "Failed to send message"));
+    } finally {
+      setSending(false);
+    }
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -532,7 +653,7 @@ export default function ProjectChatPage() {
               ref={messagesRef}
               className="chat-bg chat-scroll flex-1 overflow-y-auto px-4 py-6 sm:px-8 lg:px-16 xl:px-24"
             >
-              <div className="mx-auto max-w-3xl space-y-4">
+              <div className="mx-auto w-[100%] max-w-none space-y-4">
                 {/* Empty state */}
                 {messages.length === 0 && !loading ? (
                   <div className="flex flex-col items-center justify-center py-20 animate-chat-fade-in">
@@ -555,10 +676,16 @@ export default function ProjectChatPage() {
                 ) : null}
 
                 {/* Messages */}
-                {messages.map((message, index) => (
+                {messages.map((message, index) => {
+                  const renderedContent =
+                    message.role === "assistant"
+                      ? normalizeAssistantMarkdown(message.content)
+                      : message.content;
+
+                  return (
                   <div
                     key={message.message_id}
-                    className={`flex animate-chat-fade-in ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                    className={`flex min-w-0 animate-chat-fade-in ${message.role === "user" ? "justify-end" : "justify-start"}`}
                     style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}
                   >
                     {message.role !== "user" ? (
@@ -573,12 +700,15 @@ export default function ProjectChatPage() {
                         </svg>
                       </div>
                     ) : null}
-                    <div className={message.role === "user" ? "chat-bubble-user" : "chat-bubble-assistant"}>
-                      <div className={`prose prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_p]:mb-3 [&_p+p]:mt-0 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_table]:overflow-hidden [&_table]:rounded-xl [&_table]:border [&_table]:border-slate-200 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:border-slate-200 [&_td]:px-3 [&_td]:py-2 [&_tr:nth-child(even)]:bg-slate-50`}>
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {message.content}
+                    <div className={`${message.role === "user" ? "chat-bubble-user" : "chat-bubble-assistant"} min-w-0 overflow-hidden`}>
+                      <div className={`prose prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_p]:mb-3 [&_p+p]:mt-0 [&_p]:break-words [&_li]:break-words [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:bg-slate-900 [&_pre]:p-3 [&_code]:break-words [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:border-slate-200 [&_td]:px-3 [&_td]:py-2 [&_tr:nth-child(even)]:bg-slate-50`}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                          {renderedContent}
                         </ReactMarkdown>
                       </div>
+                      {message.role === "assistant" && message.agent_run_log ? (
+                        <AgentTracePanel log={message.agent_run_log} />
+                      ) : null}
                       {message.created_at ? (
                         <p className={`mt-2 text-[10px] ${message.role === "user" ? "text-indigo-200" : "text-slate-300"}`}>
                           {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -594,7 +724,8 @@ export default function ProjectChatPage() {
                       </div>
                     ) : null}
                   </div>
-                ))}
+                  );
+                })}
 
                 {/* Loading state */}
                 {loading ? (
@@ -618,7 +749,7 @@ export default function ProjectChatPage() {
                         <path d="M9 13v2" />
                       </svg>
                     </div>
-                    <TypingIndicator />
+                    <AgentProgressIndicator message={progressMessage} />
                   </div>
                 ) : null}
               </div>
@@ -626,7 +757,7 @@ export default function ProjectChatPage() {
 
             {/* ── Input area ── */}
             <div className="border-t border-slate-200 bg-white/80 px-4 py-4 backdrop-blur-md sm:px-8 lg:px-16 xl:px-24">
-              <form onSubmit={handleSubmit} className="mx-auto max-w-3xl">
+              <form onSubmit={handleSubmit} className="mx-auto w-[80%] max-w-none">
                 {/* Hidden file inputs */}
                 <input
                   ref={fileInputRef}

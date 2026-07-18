@@ -363,7 +363,7 @@ class EvaluatorAgent:
         """Evaluate and return a structured verdict alongside the Markdown report.
 
         Returns a dict with:
-        - ``verdict``: ``"PASS"`` or ``"FAIL"``
+        - ``verdict``: ``"PASS"`` or ``"STILL INCOMPLETE"``
         - ``evaluation_markdown``: the full Markdown evaluation text
         - ``all_topics_covered``: bool from query_relevance_tool
         - ``missing_topics``: list of topics not addressed

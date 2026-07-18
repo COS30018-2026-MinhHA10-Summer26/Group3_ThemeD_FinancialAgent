@@ -12,14 +12,12 @@ import re
 from typing import Iterable
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-CONTEXT_PATH = "ai_integration/models/agent_context.md"
-with open(CONTEXT_PATH, "r") as f:
-    try:
-        CONTEXT = f.read()
-    except UnicodeDecodeError:
-        f.seek(0)
-        f.encoding = "utf-8"
-        CONTEXT = f.read()
+from pathlib import Path
+
+_current_dir = Path(__file__).resolve().parent
+CONTEXT_PATH = _current_dir / "agent_context.md"
+with open(CONTEXT_PATH, "r", encoding="utf-8") as f:
+    CONTEXT = f.read()
 
 @dataclass
 class LLMResponse:

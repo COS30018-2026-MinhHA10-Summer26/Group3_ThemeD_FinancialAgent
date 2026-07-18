@@ -4,6 +4,11 @@ import pdfplumber
 from pypdf import PdfReader
 import fitz
 
+# Search results can include malformed PDFs. Their native MuPDF diagnostics are
+# noisy in the chat server log; callers receive the normal Python exception
+# instead and can skip just that result.
+fitz.TOOLS.mupdf_display_errors(False)
+
 def _build_header_from_multirow(data):
     """
     Detects and merges multi-row headers by propagating non-empty cells
@@ -115,25 +120,26 @@ def _make_section(text, source, page, section_title=None, section_type="body"):
         "section_type": section_type,
     }
 
-def extract_sections_from_pdf(source):
+def extract_sections_from_pdf(source, extract_tables=True):
     doc = fitz.open(source)
     sections = []
     for page_number, page in enumerate(doc):
         #
         # 1. Extract Tables
         #
-        try:
-            tables = page.find_tables()
-            for table_idx, table in enumerate(tables.tables):
-                section = _extract_table_section(table, source, page_number, table_idx)
-                if section:
-                    sections.append(section)
+        if extract_tables:
+            try:
+                tables = page.find_tables()
+                for table_idx, table in enumerate(tables.tables):
+                    section = _extract_table_section(table, source, page_number, table_idx)
+                    if section:
+                        sections.append(section)
 
-        except Exception as e:
-            print(
-                f"Table extraction failed on page "
-                f"{page_number}: {e}"
-            )
+            except Exception as e:
+                print(
+                    f"Table extraction failed on page "
+                    f"{page_number}: {e}"
+                )
         blocks = page.get_text("blocks")
 
         text_blocks = []
@@ -166,8 +172,8 @@ def extract_sections_from_pdf(source):
 
     return sections
 
-def extract_documents(source):
-    sections = extract_sections_from_pdf(source)
+def extract_documents(source, extract_tables=True):
+    sections = extract_sections_from_pdf(source, extract_tables=extract_tables)
     if sections:
         return sections
     else:

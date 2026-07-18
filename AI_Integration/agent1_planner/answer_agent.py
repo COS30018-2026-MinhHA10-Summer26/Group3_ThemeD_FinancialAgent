@@ -11,6 +11,11 @@ from typing import Any
 class AnswerAgent:
     """Generates the final grounded answer for Q&A queries."""
 
+    def __init__(self) -> None:
+        # Read by the orchestrator so an LLM failure is visible in the agent
+        # run log instead of silently degrading to a context dump.
+        self.last_error: str | None = None
+
     def run(
         self,
         query: str,
@@ -18,52 +23,65 @@ class AnswerAgent:
         metadata: dict[str, Any] | None = None,
     ) -> str:
         metadata = metadata or {}
+        self.last_error = None
         llm = self._build_external_llm()
         if llm is not None and context_docs:
             context = self._context_to_string(context_docs)
             prompt = (
-                "You are AnswerAgent in a financial multi-agent system. "
-                "Answer the user's finance question using only the provided context. "
-                "If the evidence is weak or incomplete, say that clearly.\n\n"
+                "You are the final AnswerAgent in a financial multi-agent system. "
+                "The context below was written by RetrievalAgent and SearchAgent into shared request memory. "
+                "Answer the user's question directly, using only factual claims supported by that context. "
+                "Do not describe the agent workflow or dump raw context. "
+                "Cite factual claims as [Source 1], [Source 2], etc. "
+                "If the evidence does not answer the question, state exactly what is missing instead of guessing. "
+                "When the user requests a chart or illustration and the context has dated numerical values, include "
+                "a compact Markdown table suitable for charting; do not invent values.\n\n"
                 f"User Query:\n{query}\n\n"
                 f"Context Documents:\n{context}\n\n"
-                "Return a concise grounded answer in Markdown."
+                "Return a complete, concise answer in Markdown."
             )
             try:
                 return llm.generate_response(prompt)
-            except Exception:
-                pass
+            except Exception as exc:
+                self.last_error = self._format_error("generation", exc)
+        elif llm is None and self.last_error is None:
+            self.last_error = "AnswerAgent could not initialise the answer model."
 
         if not context_docs:
             return (
                 f"I could not find enough grounded financial context to answer: {query}\n\n"
-                "Try asking about a company, filing, market topic, or add source documents to `data/raw`."
+                "Try asking about a company, filing, or market topic, or add source documents to your project."
             )
 
         lines = [
-            f"Query: {query}",
-            f"Retrieved context score: {metadata.get('coverage_score', metadata.get('retrieval_similarity', 0.0)):.2f}",
+            "I found relevant source material, but the answer model could not complete a grounded response for this request.",
+            "Please retry after checking the server's `OPENAI_API_KEY` and agent run log.",
             "",
-            "Grounded context:",
+            "Available sources:",
         ]
-        for index, doc in enumerate(context_docs, start=1):
-            text = str(doc.get("text", doc.get("content", ""))).strip().replace("\n", " ")
-            lines.append(f"{index}. [{doc.get('source', f'doc-{index}')}] {text[:280]}")
-        lines.append("")
-        lines.append("Answer: The response should be based on the context above; add stronger source material if you need a deeper conclusion.")
+        for index, doc in enumerate(context_docs[:5], start=1):
+            lines.append(f"- [Source {index}] {doc.get('source', f'doc-{index}')}")
         return "\n".join(lines)
 
     def _build_external_llm(self):
         try:
             module = importlib.import_module("ai_integration.models.external_llm")
             return module.ExternalLLM()
-        except Exception:
+        except Exception as exc:
+            self.last_error = self._format_error("initialisation", exc)
             return None
 
     def _context_to_string(self, context_docs: list[dict[str, Any]]) -> str:
         parts = []
-        for index, doc in enumerate(context_docs, start=1):
+        # Keep the prompt bounded; SearchAgent already reranks this list.
+        for index, doc in enumerate(context_docs[:8], start=1):
             source = doc.get("source", f"doc-{index}")
-            text = doc.get("text", doc.get("content", ""))
-            parts.append(f"--- DOCUMENT {index} (Source: {source}) ---\n{text}")
+            title = doc.get("source_title", source)
+            text = str(doc.get("text", doc.get("content", ""))).strip()[:3500]
+            parts.append(f"--- SOURCE {index}: {title} ({source}) ---\n{text}")
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _format_error(stage: str, exc: Exception) -> str:
+        message = str(exc).replace("\n", " ").strip()[:300]
+        return f"answer_llm_{stage}_error:{type(exc).__name__}: {message}"

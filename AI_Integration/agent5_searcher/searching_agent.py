@@ -1,24 +1,26 @@
-from ai_integration.tools.search_assess_tool import calculate_coverage
-from openai import OpenAI
-import dotenv
-import os
-from ai_integration.tools.report_search_tool import report_search_tool
-from ai_integration.entity_filter import filter_documents_for_query_entity
-from ai_integration.agent5_searcher.search_reranker import rerank_search_results
 import json
+import os
+from pathlib import Path
+
+import dotenv
+from openai import OpenAI
+
+from ai_integration.agent5_searcher.search_reranker import rerank_search_results
+from ai_integration.entity_filter import filter_documents_for_query_entity
+from ai_integration.tools.report_search_tool import report_search_tool
+from ai_integration.tools.search_assess_tool import calculate_coverage
 
 api_key = os.getenv("OPENAI_API_KEY") or dotenv.get_key(".env", "OPENAI_API_KEY")
-SKILL_PATH = "ai_integration/agent5_searcher/SKILL.md"
-with open(SKILL_PATH, "r") as f:
+SKILL_PATH = Path(__file__).resolve().with_name("SKILL.md")
+with SKILL_PATH.open("r", encoding="utf-8") as f:
     try:
         SKILL_CONTEXT = f.read()
     except UnicodeDecodeError:
         f.seek(0)
-        f.encoding = "utf-8"
         SKILL_CONTEXT = f.read()
 
 class SearchingAgent:
-    def __init__(self,coverage_threshold=0.4,max_iterations=1,top_k=10):
+    def __init__(self,coverage_threshold=0.4,max_iterations=1,top_k=2):
         self.client = OpenAI(api_key = api_key)
         self.report_search_tool = report_search_tool
         self.coverage_threshold = coverage_threshold
