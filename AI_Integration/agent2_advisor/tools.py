@@ -261,7 +261,13 @@ def comparison_tool(
     """
     Compares key metrics of two entities and returns a formatted markdown table
     including absolute and percentage changes.
-    
+
+    ANTI-HALLUCINATION CONTRACT: All numeric values in data_a and data_b MUST
+    be taken verbatim from source documents or prior tool outputs.
+    Do NOT pass estimated, rounded, or training-knowledge values to this function.
+    If an exact value is not available in the documents, omit that metric and
+    note its absence in the report instead.
+
     Args:
         data_a: Dict of metric names and numeric values for entity A.
         data_b: Dict of metric names and numeric values for entity B.
@@ -302,7 +308,31 @@ def comparison_tool(
                 pct_diff_str = "+inf%"
 
         lines.append(f"| {metric} | {str_a} | {str_b} | {abs_diff_str} | {pct_diff_str} |")
-        
+
+    # Suspect-rounding detector: flag values that look like rounded estimates
+    # (e.g. exactly $1B, $500M, $10B) which LLMs commonly hallucinate.
+    _ROUND_THRESHOLDS = [1_000_000_000, 500_000_000, 100_000_000, 50_000_000, 10_000_000]
+    suspect_metrics: list[str] = []
+    all_values = list(data_a.values()) + list(data_b.values())
+    for metric in all_metrics:
+        va = data_a.get(metric)
+        vb = data_b.get(metric)
+        for v in (va, vb):
+            if isinstance(v, (int, float)) and v != 0:
+                abs_v = abs(float(v))
+                if any(abs_v % threshold == 0 for threshold in _ROUND_THRESHOLDS):
+                    if metric not in suspect_metrics:
+                        suspect_metrics.append(metric)
+
+    if suspect_metrics:
+        lines.append("")
+        lines.append(
+            "> \u26a0\ufe0f **Data Quality Warning:** The following metric(s) contain values that appear to be "
+            "rounded estimates rather than exact figures from source documents: "
+            f"**{', '.join(suspect_metrics)}**. "
+            "Verify these figures against the original filing before citing them."
+        )
+
     return "\n".join(lines)
 
 

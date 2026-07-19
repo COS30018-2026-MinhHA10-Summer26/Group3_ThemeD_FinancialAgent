@@ -55,7 +55,14 @@ class AdvisorAgent:
                 "type": "function",
                 "function": {
                     "name": "comparison_tool",
-                    "description": "Compares key financial or operational metrics of two entities (companies, years, or industries) and returns a formatted markdown table including changes.",
+                    "description": (
+                        "Compares key financial or operational metrics of two entities (companies, years, or industries) "
+                        "and returns a formatted markdown table including changes. "
+                        "IMPORTANT \u2014 ANTI-HALLUCINATION: Only pass numeric values that appear VERBATIM in the provided "
+                        "documents or in prior tool outputs. Do NOT invent, estimate, round, or recall figures from "
+                        "training knowledge to fill this tool. If an exact value is missing from the documents, omit "
+                        "that metric and note its absence in the report instead of fabricating a plausible number."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -405,6 +412,11 @@ class AdvisorAgent:
             "6. Uses a chart/table figure when the report contains dense numeric comparisons that benefit from visualization.\n"
             "7. Any chart image is embedded as a Supabase Markdown image URL and has a factual caption/source note.\n"
             "8. Is clear English Markdown with source-aware claims.\n"
+            "9. Every financial figure cited in the report (revenue, net income, EPS, assets, liabilities, ratios, etc.) "
+            "appears VERBATIM in the provided Document Context or is derived directly from tool outputs — "
+            "no rounded, estimated, or training-knowledge values are present.\n"
+            "10. No metric was silently substituted from LLM training knowledge. "
+            "If a figure was unavailable, the report explicitly states it is missing instead of providing an estimate.\n"
         )
 
         response = self.client.chat.completions.create(
@@ -447,7 +459,11 @@ class AdvisorAgent:
                     "You are revising your own Advisor Agent report before sending it. "
                     "Fix the issues found in self-review while preserving correct analysis. "
                     "Use tools again if revised calculations, comparisons, or frameworks are needed. "
-                    "Return only the final English Markdown report."
+                    "Return only the final English Markdown report.\n\n"
+                    "CRITICAL ANTI-HALLUCINATION RULE DURING REVISION: "
+                    "Do NOT introduce any financial figure that does not appear verbatim in the Document Context or tool outputs. "
+                    "If a figure needed to fix an issue is missing from the context, explicitly state it is unavailable "
+                    "instead of substituting an estimate or a training-knowledge value."
                 )
             },
             {
@@ -571,7 +587,19 @@ class AdvisorAgent:
             "in the provided context or tool outputs, say they were not found and explain what evidence is needed.\n"
             "5. Ignore context documents that clearly belong to a different company than the user's requested company.\n"
             "6. When a chart would make key financial metrics easier to understand, use figure_generation_tool. "
-            "Embed the returned Supabase Markdown image link directly in the report. Use Markdown tables when a table is clearer."
+            "Embed the returned Supabase Markdown image link directly in the report. Use Markdown tables when a table is clearer.\n\n"
+            "GROUNDING RULES — MUST FOLLOW TO PREVENT HALLUCINATION:\n"
+            "G1. Every financial figure you write (revenue, net income, EPS, debt, assets, ratios, percentages, etc.) MUST "
+            "appear verbatim or be computed directly from numbers that appear verbatim in the provided documents or tool outputs. "
+            "Never substitute a training-knowledge estimate.\n"
+            "G2. Never round or simplify a source figure. If the document says '$97,690,000,000', do not write '$98B' or '$100B'. "
+            "Use the exact value.\n"
+            "G3. Before passing any value to comparison_tool, risk_assessment_tool, financial_calculator_tool, or "
+            "figure_generation_tool, confirm that value is present word-for-word in the context. If it is not, call "
+            "request_additional_context first.\n"
+            "G4. If after calling request_additional_context the required data is still missing, write explicitly: "
+            "'⚠️ [Metric name] was not found in the available documents. This figure cannot be confirmed without the source filing.'\n"
+            "G5. It is always better to acknowledge missing data than to fabricate a plausible-looking number."
         )
 
         messages = [

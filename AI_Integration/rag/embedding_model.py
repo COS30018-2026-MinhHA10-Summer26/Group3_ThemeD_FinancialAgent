@@ -1,17 +1,28 @@
-from sentence_transformers import SentenceTransformer
+import os
+
+import numpy as np
+from dotenv import load_dotenv
+from langchain_openai import OpenAIEmbeddings
+
+
+load_dotenv()
 
 
 class EmbeddingModel:
 
     def __init__(self, model_name):
-        self.model = SentenceTransformer(model_name)
+        openai_key = os.getenv("OPENAI_API_KEY")
+        self.model = OpenAIEmbeddings(model=model_name, openai_api_key=openai_key)
 
     def embed(self, texts):
-        return self.model.encode(texts, show_progress_bar=True)
+        return np.asarray(self.model.embed_documents(texts), dtype="float32")
     
     def embed_query(self, query):
-        return self.model.encode(query, show_progress_bar=True)  
+        return np.asarray(self.model.embed_query(query), dtype="float32")
 
-# model = EmbeddingModel("all-MiniLM-L6-v2")
+    def embed_documents(self, texts):
+        return self.embed(texts)
+
+# model = EmbeddingModel("text-embedding-3-small")
 # emb = model.embed(["test sentence"])
 # print(emb.shape

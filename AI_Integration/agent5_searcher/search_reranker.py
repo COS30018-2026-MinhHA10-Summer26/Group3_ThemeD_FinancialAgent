@@ -2,9 +2,9 @@
 Hybrid reranker for search results.
 
 After the SearchAgent downloads and extracts raw documents from the web,
-this module chunks them, embeds them with a local Sentence Transformer model
-(free, no API cost), builds a temporary in-RAM vector store with BM25 + vector
-hybrid search, and returns only the Top K most relevant chunks.
+this module chunks them, embeds them with OpenAI embeddings, builds a
+temporary in-RAM vector store with BM25 + vector hybrid search, and returns
+only the Top K most relevant chunks.
 
 This eliminates information overload in shared memory and avoids sending
 hundreds of raw pages to downstream agents.
@@ -24,7 +24,7 @@ from ai_integration.rag.embedding_model import EmbeddingModel
 # Default settings (mirrors config.yaml for the main RAG pipeline)
 _DEFAULT_CHUNK_SIZE = 400
 _DEFAULT_CHUNK_OVERLAP = 50
-_DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+_DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 _DEFAULT_VECTOR_WEIGHT = 0.6
 _DEFAULT_BM25_WEIGHT = 0.4
 
@@ -54,7 +54,7 @@ def rerank_search_results(
     chunk_size / chunk_overlap:
         Chunking parameters passed to ``chunk_documents()``.
     embedding_model_name:
-        Sentence Transformer model name (runs locally, free).
+        OpenAI embedding model name.
     vector_weight / bm25_weight:
         Weights for the hybrid RRF fusion.
 
@@ -76,7 +76,7 @@ def rerank_search_results(
     if not chunks:
         return []
 
-    # ── Step 3: Embed (local Sentence Transformer, free) ─────────────
+    # ── Step 3: Embed (OpenAI embeddings) ────────────────────────────
     texts = [chunk["text"] for chunk in chunks]
     model = EmbeddingModel(embedding_model_name)
     chunk_embeddings = model.embed(texts)

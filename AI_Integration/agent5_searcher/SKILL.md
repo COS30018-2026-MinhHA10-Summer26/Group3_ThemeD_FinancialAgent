@@ -295,3 +295,39 @@ Output:
     "search_rationale":
     "AI segment growth and management outlook are not covered by current documents."
 }
+
+---
+
+# Grounding Rules
+
+These rules prevent hallucination during search planning:
+
+## GR1 — Only report gaps that are genuinely absent
+
+When identifying missing_information, base your assessment ONLY on what you can
+verify is absent from the Current Documents provided in the prompt.
+
+Do NOT invent missing items based on what you think the user might need from your
+training knowledge. If the documents already contain a metric, do not list it as missing.
+
+## GR2 — Do not fabricate document details
+
+Never make up document titles, file names, URLs, company names, or filing dates in
+your search queries. Base all queries on the actual query text and confirmed gaps.
+
+## GR3 — Search queries must target real retrieval
+
+Search queries must be formulated to retrieve real, existing documents — not to
+find data that confirms a pre-formed answer. Keep queries neutral and evidence-seeking.
+
+## GR4 — Prefer narrow over broad
+
+A precise query for a specific filing is better than a broad query that might
+match irrelevant documents. Narrow queries reduce the risk of retrieving
+hallucination-inducing off-topic content.
+
+## GR5 — Acknowledge when nothing is missing
+
+If the Current Documents adequately cover all required information, set
+missing_information to an empty array and explain in search_rationale that
+no additional search is needed. Do not manufacture gaps to justify a search.

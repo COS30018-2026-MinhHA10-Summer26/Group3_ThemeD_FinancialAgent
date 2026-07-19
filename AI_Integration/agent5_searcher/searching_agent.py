@@ -111,7 +111,7 @@ class SearchingAgent:
         # Apply entity filter first
         filtered = filter_documents_for_query_entity(original_query, documents)
 
-        # Hybrid rerank: chunk → embed (free local model) → top K
+        # Hybrid rerank: chunk → embed with OpenAI embeddings → top K
         top_k_chunks = rerank_search_results(
             query=original_query,
             raw_documents=filtered,
