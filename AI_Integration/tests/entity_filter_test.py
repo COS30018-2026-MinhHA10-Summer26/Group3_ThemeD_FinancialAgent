@@ -1,5 +1,5 @@
 from ai_integration.agent1_planner.retrieval_agent import RetrievalAgent
-from ai_integration.entity_filter import filter_documents_for_query_entity
+from ai_integration.entity_filter import filter_documents_for_query_entity, missing_query_entities
 
 
 def test_filter_documents_for_query_entity_keeps_requested_company_only():
@@ -39,3 +39,13 @@ def test_retrieval_agent_keeps_apple_docs_for_apple_query(tmp_path):
     assert len(result["context_docs"]) == 1
     assert result["context_docs"][0]["source"] == "2024 Form 10-K - Apple Inc..pdf"
     assert result["coverage_score"] > 0.0
+
+
+def test_missing_query_entities_identifies_google_when_only_tesla_is_retrieved():
+    docs = [
+        {"source": "Tesla 2024 Form 10-K.pdf", "text": "Tesla, Inc. automotive revenue and outlook."},
+    ]
+
+    missing = missing_query_entities("Should I invest in Tesla or Google?", docs)
+
+    assert missing == {"google"}

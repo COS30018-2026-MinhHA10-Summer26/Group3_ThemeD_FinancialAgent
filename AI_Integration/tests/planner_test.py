@@ -117,6 +117,101 @@ def test_run_deep_advice_state():
     assert result["executed_agents"] == ["RetrievalAgent", "SearchAgent", "AdvisorAgent", "CriticAgent", "EvaluatorAgent"]
 
 
+def test_search_runs_when_one_named_company_is_missing_despite_high_coverage():
+    class EntityCoveragePlanner(PlanningOrchestrator):
+        def classify_query(self, query):
+            return {"route": "qa", "reason": "comparison", "confidence": 1.0}
+
+        def plan_query(self, query, decision):
+            return {
+                "route": "qa",
+                "required_information": [],
+                "workflow": [
+                    {"step": 1, "agent": "RetrievalAgent"},
+                    {"step": 2, "agent": "SearchAgent", "condition": "coverage_score < 0.9"},
+                    {"step": 3, "agent": "AnswerAgent"},
+                ],
+            }
+
+        def _build_retrieval_agent(self):
+            class TeslaOnlyRetrievalAgent:
+                def run(self_inner, query, memory):
+                    return {
+                        "context_docs": [{"source": "Tesla 10-K.pdf", "text": "Tesla outlook."}],
+                        "coverage_score": 1.0,
+                        "workflow_steps": [],
+                        "tool_calls": [],
+                        "tool_results": [],
+                        "errors": [],
+                        "metadata": {},
+                    }
+            return TeslaOnlyRetrievalAgent()
+
+        def _build_search_agent(self):
+            class GoogleSearchAgent:
+                def run(self_inner, query, documents):
+                    assert len(documents) == 1
+                    return [{"source": "Alphabet 10-K.pdf", "text": "Google and Alphabet outlook."}]
+            return GoogleSearchAgent()
+
+        def _build_answer_agent(self):
+            class StubAnswerAgent:
+                def run(self_inner, query, context_docs, metadata=None):
+                    return "comparison answer"
+            return StubAnswerAgent()
+
+    result = EntityCoveragePlanner().run("Should I invest in Tesla or Google?")
+
+    assert result["executed_agents"] == ["RetrievalAgent", "SearchAgent", "AnswerAgent"]
+    assert {doc["source"] for doc in result["context_docs"]} == {"Tesla 10-K.pdf", "Alphabet 10-K.pdf"}
+
+
+def test_multi_company_qa_plan_gets_a_search_step_when_the_planner_omits_it():
+    class MissingSearchStepPlanner(PlanningOrchestrator):
+        def classify_query(self, query):
+            return {"route": "qa", "reason": "comparison", "confidence": 1.0}
+
+        def plan_query(self, query, decision):
+            return {
+                "route": "qa",
+                "required_information": [],
+                "workflow": [
+                    {"step": 1, "agent": "RetrievalAgent"},
+                    {"step": 2, "agent": "AnswerAgent"},
+                ],
+            }
+
+        def _build_retrieval_agent(self):
+            class TeslaOnlyRetrievalAgent:
+                def run(self_inner, query, memory):
+                    return {
+                        "context_docs": [{"source": "Tesla 10-K.pdf", "text": "Tesla outlook."}],
+                        "coverage_score": 1.0,
+                        "workflow_steps": [],
+                        "tool_calls": [],
+                        "tool_results": [],
+                        "errors": [],
+                        "metadata": {},
+                    }
+            return TeslaOnlyRetrievalAgent()
+
+        def _build_search_agent(self):
+            class GoogleSearchAgent:
+                def run(self_inner, query, documents):
+                    return [{"source": "Alphabet 10-K.pdf", "text": "Google and Alphabet outlook."}]
+            return GoogleSearchAgent()
+
+        def _build_answer_agent(self):
+            class StubAnswerAgent:
+                def run(self_inner, query, context_docs, metadata=None):
+                    return "comparison answer"
+            return StubAnswerAgent()
+
+    result = MissingSearchStepPlanner().run("Should I invest in Tesla or Google?")
+
+    assert result["executed_agents"] == ["RetrievalAgent", "SearchAgent", "AnswerAgent"]
+
+
 def test_advisor_context_delegate_retrieves_and_searches():
     class DelegatePlanner(PlanningOrchestrator):
         def __init__(self):

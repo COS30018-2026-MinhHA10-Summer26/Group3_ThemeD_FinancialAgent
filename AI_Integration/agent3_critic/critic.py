@@ -1,9 +1,11 @@
 import json
 import os
 from pathlib import Path
+import time
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
+import openai
 from openai import OpenAI
 
 from ai_integration.agent3_critic.tools import (
@@ -19,6 +21,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_PATH = PROJECT_ROOT / "backend" / ".env"
 load_dotenv(dotenv_path=str(PROJECT_ROOT / ".env"))
 load_dotenv(dotenv_path=str(ENV_PATH))
+
+MAX_DOC_CHARS = 2500
+
+
+def _safe_chat_completion(client: OpenAI, **kwargs) -> Any:
+    """Execute chat completion with retry and backoff on RateLimitError (429)."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except openai.RateLimitError as exc:
+            if attempt == max_retries - 1:
+                raise
+            sleep_time = (attempt + 1) * 4
+            print(f"   [CriticAgent] OpenAI RateLimitError (429). Retrying in {sleep_time}s (attempt {attempt + 1}/{max_retries})...")
+            time.sleep(sleep_time)
 
 
 class CriticAgent:
@@ -155,12 +173,15 @@ class CriticAgent:
         context_str = ""
         for i, doc in enumerate(context_docs, 1):
             source = doc.get("source", f"Doc {i}")
-            text = doc.get("text", doc.get("content", ""))
+            text = str(doc.get("text", doc.get("content", ""))).strip()
+            if len(text) > MAX_DOC_CHARS:
+                text = text[:MAX_DOC_CHARS] + f"\n... [truncated to {MAX_DOC_CHARS} chars to fit TPM limits]"
             context_str += f"\n--- DOCUMENT {i} (Source: {source}) ---\n{text}\n"
         return context_str
 
     def _run_tool_calling(self, messages: List[Dict[str, Any]], temperature: float = 0.1) -> str:
-        response = self.client.chat.completions.create(
+        response = _safe_chat_completion(
+            self.client,
             model=self.model,
             messages=messages,
             tools=self.tools_schema,
@@ -190,7 +211,8 @@ class CriticAgent:
                     }
                 )
 
-            response = self.client.chat.completions.create(
+            response = _safe_chat_completion(
+                self.client,
                 model=self.model,
                 messages=messages,
                 tools=self.tools_schema,

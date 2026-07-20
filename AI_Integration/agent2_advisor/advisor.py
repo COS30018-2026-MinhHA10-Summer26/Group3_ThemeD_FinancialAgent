@@ -1,8 +1,10 @@
 import json
 import os
 from pathlib import Path
+import time
 from typing import Any, Callable, Dict, List, Optional
 from dotenv import load_dotenv
+import openai
 from openai import OpenAI
 
 # Import the tools from our local module
@@ -21,6 +23,22 @@ load_dotenv(dotenv_path=str(PROJECT_ROOT / ".env"))
 load_dotenv(dotenv_path=str(ENV_PATH))
 
 ContextProvider = Callable[[str, List[Dict[str, Any]], Dict[str, Any]], Dict[str, Any]]
+MAX_CONTEXT_DOCUMENTS = 2
+MAX_DOC_CHARS = 2500
+
+
+def _safe_chat_completion(client: OpenAI, **kwargs) -> Any:
+    """Execute chat completion with retry and backoff on RateLimitError (429)."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except openai.RateLimitError as exc:
+            if attempt == max_retries - 1:
+                raise
+            sleep_time = (attempt + 1) * 4
+            print(f"   [AdvisorAgent] OpenAI RateLimitError (429). Retrying in {sleep_time}s (attempt {attempt + 1}/{max_retries})...")
+            time.sleep(sleep_time)
 
 
 class AdvisorAgent:
@@ -45,6 +63,7 @@ class AdvisorAgent:
         self.max_tool_loops = max_tool_loops
         self.max_self_review_loops = max_self_review_loops
         self.context_provider = context_provider
+        self.max_context_documents = MAX_CONTEXT_DOCUMENTS
         self.current_query = ""
         self.current_context_docs: List[Dict[str, Any]] = []
         self.delegated_context_events: List[Dict[str, Any]] = []
@@ -242,16 +261,16 @@ class AdvisorAgent:
                 res = figure_generation_tool(**arguments)
                 return json.dumps(res, indent=2, ensure_ascii=False)
 
-            elif name == "request_additional_context":
-                res = self._request_additional_context(arguments)
-                return json.dumps(res, indent=2, ensure_ascii=False)
-            
             else:
                 return f"Error: Tool '{name}' is not recognized."
         except Exception as e:
             return f"Error executing tool '{name}': {str(e)}"
 
-    def _request_additional_context(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    def _request_additional_context(
+        self,
+        arguments: Dict[str, Any],
+        messages_ref: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         if self.context_provider is None:
             return {
                 "status": "unavailable",
@@ -271,24 +290,63 @@ class AdvisorAgent:
 
         result = self.context_provider(self.current_query, self.current_context_docs, arguments)
         new_docs = result.get("context_docs", [])
-        if isinstance(new_docs, list):
-            self.current_context_docs = self._deduplicate_documents(self.current_context_docs + new_docs)
+        added_count = 0
+        if isinstance(new_docs, list) and new_docs:
+            existing_docs = self.current_context_docs
+            existing_keys = {
+                (str(doc.get("source", "unknown")), str(doc.get("text", doc.get("content", "")).strip()))
+                for doc in existing_docs
+            }
+            new_unique_docs = [
+                doc for doc in self._deduplicate_documents(new_docs)
+                if (str(doc.get("source", "unknown")), str(doc.get("text", doc.get("content", "")).strip())) not in existing_keys
+            ]
+
+            # Prefer newly retrieved evidence, but never let retrieval expand
+            # the Advisor conversation beyond two chunks.
+            self.current_context_docs = self._limit_context_documents(new_unique_docs + existing_docs)
+            added_docs = [
+                doc for doc in self.current_context_docs
+                if (str(doc.get("source", "unknown")), str(doc.get("text", doc.get("content", "")).strip())) not in existing_keys
+            ]
+            added_count = len(added_docs)
+
+            # ── Inject full document content into the live message thread ──
+            # This is the critical step: without this, the LLM only sees a
+            # short preview in the tool result and cannot use the new data.
+            # NOTE: injection is returned as a separate field and appended
+            # by _run_tool_calling AFTER all tool responses are added,
+            # to avoid breaking the OpenAI message ordering requirement
+            # (every tool_call_id must be responded to before any new
+            # user message can appear).
+            if messages_ref is not None and added_count > 0:
+                self._pending_inject_message = self._build_injected_context_message(added_docs)
+                print(f"   [AdvisorAgent] Injected {added_count} new doc(s) into conversation context.")
+        else:
+            added_count = 0
 
         event = {
             "missing_information": arguments.get("missing_information", []),
             "search_queries": arguments.get("search_queries", []),
             "reason": arguments.get("reason", ""),
-            "added_document_count": len(new_docs) if isinstance(new_docs, list) else 0,
+            "added_document_count": added_count,
             "coverage_score": result.get("coverage_score"),
             "metadata": result.get("metadata", {}),
         }
         self.delegated_context_events.append(event)
 
+        status = "completed" if added_count > 0 else "no_new_documents_found"
         return {
-            "status": "completed",
-            "added_document_count": event["added_document_count"],
+            "status": status,
+            "added_document_count": added_count,
             "coverage_score": event["coverage_score"],
-            "documents": self._summarize_context_docs(new_docs if isinstance(new_docs, list) else []),
+            "message": (
+                f"{added_count} new document(s) retrieved and injected into context. "
+                "Read and use the newly available documents above before continuing."
+                if added_count > 0
+                else "No new documents were found for the requested topics. "
+                     "Proceed by explicitly noting what data is unavailable."
+            ),
             "metadata": event["metadata"],
         }
 
@@ -317,10 +375,24 @@ class AdvisorAgent:
                     "source": doc.get("source", f"Doc {index}"),
                     "page": doc.get("page", 1),
                     "score": doc.get("score"),
-                    "preview": text[:700],
+                    "preview": text[:1500],
                 }
             )
         return summaries
+
+    def _build_injected_context_message(self, new_docs: List[Dict[str, Any]]) -> str:
+        """Build a message of newly retrieved documents to inject into the conversation, capping text to avoid token limits."""
+        if not new_docs:
+            return "No new documents were retrieved."
+        lines = ["The following NEW documents were just retrieved. You MUST read and use them before continuing:"]
+        for i, doc in enumerate(new_docs, 1):
+            source = doc.get("source", f"Doc {i}")
+            page = doc.get("page", 1)
+            text = str(doc.get("text", doc.get("content", ""))).strip()
+            if len(text) > MAX_DOC_CHARS:
+                text = text[:MAX_DOC_CHARS] + f"\n... [truncated to {MAX_DOC_CHARS} chars to fit TPM limits]"
+            lines.append(f"\n--- NEW DOCUMENT {i} (Source: {source}, Page: {page}) ---\n{text}")
+        return "\n".join(lines)
 
     def _deduplicate_documents(self, context_docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         seen: set[tuple[str, str]] = set()
@@ -340,16 +412,24 @@ class AdvisorAgent:
             unique.append(normalized)
         return unique
 
+    def _limit_context_documents(self, context_docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Deduplicate and retain only the small evidence set sent to the LLM."""
+
+        return self._deduplicate_documents(context_docs)[:self.max_context_documents]
+
     def _build_context_string(self, context_docs: List[Dict[str, Any]]) -> str:
         context_str = ""
         for i, doc in enumerate(context_docs, 1):
             source = doc.get("source", f"Doc {i}")
-            text = doc.get("text", doc.get("content", ""))
+            text = str(doc.get("text", doc.get("content", ""))).strip()
+            if len(text) > MAX_DOC_CHARS:
+                text = text[:MAX_DOC_CHARS] + f"\n... [truncated to {MAX_DOC_CHARS} chars to fit TPM limits]"
             context_str += f"\n--- DOCUMENT {i} (Source: {source}) ---\n{text}\n"
         return context_str
 
     def _run_tool_calling(self, messages: List[Dict[str, Any]], temperature: float = 0.2) -> str:
-        response = self.client.chat.completions.create(
+        response = _safe_chat_completion(
+            self.client,
             model=self.model,
             messages=messages,
             tools=self.tools_schema,
@@ -367,10 +447,23 @@ class AdvisorAgent:
 
             messages.append(response_message)
 
+            # Clear any pending inject message from a previous iteration
+            self._pending_inject_message: str | None = None
+
             for tool_call in tool_calls:
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
-                tool_output = self._execute_tool(function_name, function_args)
+
+                # Pass the live messages list to request_additional_context so
+                # it can signal back that new document content should be injected.
+                if function_name == "request_additional_context":
+                    tool_output = json.dumps(
+                        self._request_additional_context(function_args, messages_ref=messages),
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                else:
+                    tool_output = self._execute_tool(function_name, function_args)
 
                 messages.append({
                     "tool_call_id": tool_call.id,
@@ -379,7 +472,20 @@ class AdvisorAgent:
                     "content": tool_output
                 })
 
-            response = self.client.chat.completions.create(
+            # ── Deferred context injection ──────────────────────────────────
+            # Append the injected-document user message AFTER all tool
+            # responses have been added.  OpenAI requires every tool_call_id
+            # in an assistant message to be immediately followed by its
+            # corresponding tool message before any new user message appears.
+            if getattr(self, "_pending_inject_message", None):
+                messages.append({
+                    "role": "user",
+                    "content": self._pending_inject_message,
+                })
+                self._pending_inject_message = None
+
+            response = _safe_chat_completion(
+                self.client,
                 model=self.model,
                 messages=messages,
                 tools=self.tools_schema,
@@ -419,7 +525,8 @@ class AdvisorAgent:
             "If a figure was unavailable, the report explicitly states it is missing instead of providing an estimate.\n"
         )
 
-        response = self.client.chat.completions.create(
+        response = _safe_chat_completion(
+            self.client,
             model=self.model,
             messages=[
                 {"role": "system", "content": review_system_message},
@@ -527,7 +634,7 @@ class AdvisorAgent:
         str
             The revised advisor report (Markdown).
         """
-        self.current_context_docs = self._deduplicate_documents(context_docs)
+        self.current_context_docs = self._limit_context_documents(context_docs)
         context_str = self._build_context_string(self.current_context_docs)
 
         # Extract checklist items from critic feedback
@@ -560,22 +667,43 @@ class AdvisorAgent:
         context_str = self._build_context_string(self.current_context_docs)
         return self._self_review_and_revise(query, context_str, revised)
 
-    def run(self, query: str, context_docs: List[Dict[str, Any]]) -> str:
+    def run(self, query: str, context_docs: List[Dict[str, Any]], user_preferences: dict | None = None) -> str:
         """
         Runs the Advisor Agent to analyze the user's query against the context documents.
-        """
+
+        Parameters
+        ----------
+        query:
+            The user's financial question.
+        context_docs:
+            The current retrieval context documents.
+        user_preferences:
+            Optional dict of user preferences (from user_preference_memory.PreferenceReader).
+            If provided, a personalisation block is injected into the system prompt.
+        """""
         
         self.current_query = query
-        self.current_context_docs = self._deduplicate_documents(context_docs)
+        self.current_context_docs = self._limit_context_documents(context_docs)
         self.delegated_context_events = []
 
         # Build the background context description for the model
         context_str = self._build_context_string(self.current_context_docs)
 
+        # ── User Preference block (injected when preferences exist) ────────
+        preference_block = ""
+        if user_preferences:
+            try:
+                from ai_integration.memory.user_preference_memory import PreferenceReader  # noqa: PLC0415
+                preference_block = PreferenceReader.format_for_prompt(user_preferences)
+            except Exception:
+                preference_block = ""
+        pref_section = f"\n{preference_block}\n" if preference_block else ""
+
         system_message = (
             "You are a professional Advisor Agent specialized in strategic business and financial consulting.\n"
-            "Your task is to provide high-quality advice and actionable suggestions based on the context documents provided.\n\n"
-            "OPERATING GUIDELINES:\n"
+            "Your task is to provide high-quality advice and actionable suggestions based on the context documents provided.\n"
+            f"{pref_section}"
+            "\nOPERATING GUIDELINES:\n"
             "1. ALWAYS USE THE PROVIDED TOOLS when financial calculations, comparisons, or analytical frameworks "
             "(SWOT, Porter's 5 Forces, PESTEL) are needed. Do not manually calculate complex financial or mathematical formulas.\n"
             "2. If the context documents lack necessary information for risk analysis or fulfilling the user's core request, "
@@ -601,6 +729,7 @@ class AdvisorAgent:
             "'⚠️ [Metric name] was not found in the available documents. This figure cannot be confirmed without the source filing.'\n"
             "G5. It is always better to acknowledge missing data than to fabricate a plausible-looking number."
         )
+
 
         messages = [
             {"role": "system", "content": system_message},

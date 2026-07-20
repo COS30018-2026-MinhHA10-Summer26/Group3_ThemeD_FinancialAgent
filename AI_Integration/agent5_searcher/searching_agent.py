@@ -1,12 +1,15 @@
 import json
 import os
 from pathlib import Path
+import time
+from typing import Any
 
 import dotenv
+import openai
 from openai import OpenAI
 
 from ai_integration.agent5_searcher.search_reranker import rerank_search_results
-from ai_integration.entity_filter import filter_documents_for_query_entity
+from ai_integration.entity_filter import filter_documents_for_query_entity, missing_query_entities
 from ai_integration.tools.report_search_tool import report_search_tool
 from ai_integration.tools.search_assess_tool import calculate_coverage
 
@@ -19,6 +22,21 @@ with SKILL_PATH.open("r", encoding="utf-8") as f:
         f.seek(0)
         SKILL_CONTEXT = f.read()
 
+
+def _safe_chat_completion(client: OpenAI, **kwargs) -> Any:
+    """Execute chat completion with retry and backoff on RateLimitError (429)."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except openai.RateLimitError as exc:
+            if attempt == max_retries - 1:
+                raise
+            sleep_time = (attempt + 1) * 4
+            print(f"   [SearchingAgent] OpenAI RateLimitError (429). Retrying in {sleep_time}s (attempt {attempt + 1}/{max_retries})...")
+            time.sleep(sleep_time)
+
+
 class SearchingAgent:
     def __init__(self,coverage_threshold=0.4,max_iterations=1,top_k=2):
         self.client = OpenAI(api_key = api_key)
@@ -28,21 +46,36 @@ class SearchingAgent:
         self.top_k = top_k
         self.skill_context = SKILL_CONTEXT
 
+    def _truncate_docs_for_prompt(self, documents, max_chars_per_doc: int = 300) -> str:
+        """Return a compact summary of documents to avoid TPM limits.
+        Full text is not needed – a short preview is enough for the LLM to
+        identify gaps and generate search queries."""
+        lines = []
+        for i, doc in enumerate(documents, 1):
+            text = str(doc.get("text", doc.get("content", "")) if isinstance(doc, dict) else doc).strip()
+            source = doc.get("source", f"doc-{i}") if isinstance(doc, dict) else f"doc-{i}"
+            lines.append(f"[{i}] {source}: {text[:max_chars_per_doc]}{'...' if len(text) > max_chars_per_doc else ''}")
+        return "\n".join(lines) if lines else "(no documents)"
+
     def identify_missing_information(self, user_query, documents):
-        return self.client.chat.completions.create(
+        doc_summary = self._truncate_docs_for_prompt(documents)
+        return _safe_chat_completion(
+            self.client,
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": self.skill_context},
-                {"role": "user", "content": f"User Query: {user_query}\n\nCurrent Documents: {documents}\n\nIdentify the missing information needed to fully answer the user query based on the current documents."}
+                {"role": "user", "content": f"User Query: {user_query}\n\nCurrent Documents (summaries):\n{doc_summary}\n\nIdentify the missing information needed to fully answer the user query based on the current documents."}
             ]
         ).choices[0].message.content
 
     def generate_search_queries(self, user_query, documents, missing_info):
-        return self.client.chat.completions.create(
+        doc_summary = self._truncate_docs_for_prompt(documents)
+        return _safe_chat_completion(
+            self.client,
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": self.skill_context},
-                {"role": "user", "content": f"User Query: {user_query}\n\nCurrent Documents: {documents}\n\nMissing Information: {missing_info}\n\nGenerate specific search queries to retrieve the missing information."}
+                {"role": "user", "content": f"User Query: {user_query}\n\nCurrent Documents (summaries):\n{doc_summary}\n\nMissing Information: {missing_info}\n\nGenerate specific search queries to retrieve the missing information."}
             ]
         ).choices[0].message.content
 
@@ -92,19 +125,35 @@ class SearchingAgent:
         original_query = user_query
         while iteration < self.max_iterations:
             coverage = self._coverage(user_query, documents)
-            if coverage >= self.coverage_threshold:
+            missing_entities = missing_query_entities(original_query, documents)
+            if coverage >= self.coverage_threshold and not missing_entities:
                 break
             missing_info = self.identify_missing_information(
                 user_query,
                 documents
             )
-            user_query = f"User Query: {user_query}\n\nThe identified missing information is: {missing_info}"
+            search_context = (
+                f"User Query: {original_query}\n\n"
+                f"The identified missing information is: {missing_info}"
+            )
+            if missing_entities:
+                search_context += (
+                    "\n\nThe current context has no document for these named companies: "
+                    f"{', '.join(sorted(missing_entities))}. Generate a targeted official-report query for each."
+                )
             
             queries = self._parse_search_queries(
-                self.generate_search_queries(user_query,documents,missing_info)
+                self.generate_search_queries(search_context, documents, missing_info)
             )
+            # Keep the entity-coverage guarantee deterministic even if the LLM
+            # omits a company from its generated query list.
+            queries.extend(
+                f"{entity.title()} annual report 10-K investor relations PDF"
+                for entity in sorted(missing_entities)
+            )
+            queries = list(dict.fromkeys(queries))
             print(f"Iteration {iteration + 1}: Generated Search Queries: {queries}")
-            new_documents = self.retrieve_documents(queries, user_query)
+            new_documents = self.retrieve_documents(queries, original_query)
             documents.extend(new_documents)
             iteration += 1
 

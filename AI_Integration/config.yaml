@@ -13,3 +13,29 @@ retrieval:
 revision:
   max_loops: 2
   search_on_missing: true
+
+semantic_memory:
+  enabled: true
+  recall_top_k: 5
+  similarity_threshold: 0.75
+  max_facts_to_extract: 10
+  extraction_model: "gpt-4o-mini"
+
+preference_memory:
+  enabled: true
+  detection_model: "gpt-4o-mini"
+  allowed_frameworks:
+    - "SWOT"
+    - "Porter's 5 Forces"
+    - "PESTEL"
+    - "DCF"
+    - "CAPM"
+  allowed_formats:
+    - "brief"
+    - "detailed"
+  allowed_risk_levels:
+    - "conservative"
+    - "moderate"
+    - "aggressive"
+  max_sectors: 5
+

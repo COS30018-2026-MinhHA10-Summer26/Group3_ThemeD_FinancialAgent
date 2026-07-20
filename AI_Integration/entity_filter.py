@@ -10,6 +10,7 @@ from typing import Any, Iterable
 COMPANY_ALIASES: dict[str, tuple[str, ...]] = {
     "tesla": ("tesla", "tsla", "tesla inc"),
     "apple": ("apple", "aapl", "apple inc"),
+    "google": ("google", "goog", "googl", "alphabet", "alphabet inc"),
     "microsoft": ("microsoft", "msft", "microsoft corporation"),
     "nvidia": ("nvidia", "nvda", "nvidia corporation"),
     "adobe": ("adobe", "adbe", "adobe inc"),
@@ -77,6 +78,46 @@ def extract_entity_aliases(query: str, metadata: dict[str, Any] | None = None) -
             aliases.add(ticker.lower())
 
     return {alias for alias in aliases if alias}
+
+
+def extract_query_entities(query: str, metadata: dict[str, Any] | None = None) -> set[str]:
+    """Return the canonical known companies explicitly named in a query."""
+
+    metadata = metadata or {}
+    query_text = normalize_text(query)
+    entities: set[str] = set()
+
+    company_name = normalize_text(metadata.get("company_name"))
+    for canonical, aliases in COMPANY_ALIASES.items():
+        if company_name and any(_contains_alias(company_name, alias) for alias in aliases):
+            entities.add(canonical)
+        if any(_contains_alias(query_text, alias) for alias in aliases):
+            entities.add(canonical)
+
+    return entities
+
+
+def document_matches_entity(entity: str, document: dict[str, Any]) -> bool:
+    """Whether a document contains the specified canonical company or alias."""
+
+    aliases = COMPANY_ALIASES.get(normalize_text(entity), (normalize_text(entity),))
+    text = document_text(document)
+    return any(_contains_alias(text, alias) for alias in aliases)
+
+
+def missing_query_entities(
+    query: str,
+    documents: Iterable[dict[str, Any]],
+    metadata: dict[str, Any] | None = None,
+) -> set[str]:
+    """Return named companies that have no matching document in the context."""
+
+    document_list = list(documents)
+    return {
+        entity
+        for entity in extract_query_entities(query, metadata)
+        if not any(document_matches_entity(entity, document) for document in document_list)
+    }
 
 
 def matches_query_entity(

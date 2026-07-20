@@ -37,6 +37,7 @@ def run_multi_agent_chat(
     image_base64: str | None = None,
     pdf_chunks: list[Any] | None = None,
     progress_callback: ProgressCallback | None = None,
+    user_id: Any = None,
 ) -> dict[str, Any]:
     """Return an orchestrated response grounded in the project's Supabase chunks."""
     contextual_query, conversation_history = prepare_history_aware_query(query, conversation_id)
@@ -56,6 +57,7 @@ def run_multi_agent_chat(
     metadata = {
         "project_id": str(project_id),
         "conversation_id": str(conversation_id),
+        "user_id": str(user_id) if user_id is not None else None,
         "contextual_query": contextual_query,
         "conversation_turn_count": len(conversation_history),
         "has_uploaded_image": bool(image_base64),

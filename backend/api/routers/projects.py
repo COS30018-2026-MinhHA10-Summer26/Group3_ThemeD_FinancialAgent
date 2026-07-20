@@ -527,6 +527,7 @@ async def send_conversation_message_stream(
                 image_base64,
                 pdf_chunks,
                 emit_progress,
+                current_user.get("id"),
             ),
         )
         try:

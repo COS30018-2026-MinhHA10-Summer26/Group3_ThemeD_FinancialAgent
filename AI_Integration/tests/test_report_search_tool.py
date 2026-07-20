@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import requests
+
 from ai_integration.tools import report_search_tool as search_tool
 
 
@@ -47,3 +49,35 @@ def test_report_search_uses_only_a_request_scoped_temp_file(monkeypatch, tmp_pat
     assert not (tmp_path / "data" / "raw").exists()
     assert result["synthetic_results"][0]["source"] == "https://example.test/tesla.pdf"
     assert result["sources"] == [{"title": "Tesla annual report", "url": "https://example.test/tesla.pdf"}]
+
+
+def test_report_search_skips_invalid_tls_and_uses_next_candidate(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        if url == "https://serpapi.com/search":
+            return _FakeResponse(payload={
+                "organic_results": [
+                    {"title": "Bad TLS report", "link": "https://invalid-cert.test/report.pdf"},
+                    {"title": "Trusted report", "link": "https://trusted.test/report.pdf"},
+                ],
+            })
+        if url == "https://invalid-cert.test/report.pdf":
+            raise requests.exceptions.SSLError("certificate verify failed")
+        return _FakeResponse(content=b"%PDF-1.7 trusted report")
+
+    monkeypatch.setattr(search_tool.requests, "get", fake_get)
+    monkeypatch.setattr(search_tool, "_is_parseable_pdf", lambda _content: True)
+    monkeypatch.setattr(
+        search_tool,
+        "extract_documents",
+        lambda _path, **_kwargs: [{"text": "Tesla revenue in the trusted report.", "page": 1}],
+    )
+
+    result = search_tool.report_search_tool("Tesla revenue", max_results=1)
+
+    assert result["sources"] == [{"title": "Trusted report", "url": "https://trusted.test/report.pdf"}]
+    assert all(kwargs.get("verify") is not False for _url, kwargs in calls)
+    search_request = calls[0]
+    assert search_request[1]["params"]["num"] == 5

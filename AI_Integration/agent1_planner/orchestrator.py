@@ -11,17 +11,26 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 from pathlib import Path
 import re
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 import yaml
 
 from ai_integration.agent1_planner.answer_agent import AnswerAgent
 from ai_integration.agent1_planner.retrieval_agent import RetrievalAgent
 from ai_integration.agent5_searcher.searching_agent import SearchingAgent
-from ai_integration.entity_filter import filter_documents_for_query_entity
+from ai_integration.entity_filter import (
+    extract_query_entities,
+    filter_documents_for_query_entity,
+    missing_query_entities,
+)
 from ai_integration.memory.session_memory import ShortTermMemory
+from ai_integration.memory.semantic_memory import get_reader as _get_semantic_reader, get_writer as _get_semantic_writer, is_semantic_memory_enabled
+from ai_integration.memory.user_preference_memory import get_reader as _get_pref_reader, get_writer as _get_pref_writer, is_preference_memory_enabled
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -77,7 +86,7 @@ Return JSON in this shape:
     {
       "step": 2,
       "agent": "SearchAgent",
-      "condition": "coverage_score < 0.9"
+      "condition": "coverage_score < 0.72"
     }
   ]
 }
@@ -203,6 +212,23 @@ class PlanningOrchestrator:
 
     def _execute_plan(self, state: dict[str, Any], memory: dict[str, Any]) -> None:
         workflow = sorted(state.get("planned_workflow", []), key=lambda item: item.get("step", 0))
+        # A planner model may omit SearchAgent from an otherwise valid plan.
+        # For a multi-company comparison, add it after retrieval so missing
+        # company evidence is always eligible for external search.
+        if (
+            state.get("route") != "skip"
+            and len(extract_query_entities(state["cleaned_query"], state.get("metadata", {}))) > 1
+            and not any(str(step.get("agent", "")).strip() == "SearchAgent" for step in workflow)
+        ):
+            retrieval_index = next(
+                (index for index, step in enumerate(workflow) if step.get("agent") == "RetrievalAgent"),
+                len(workflow),
+            )
+            previous_step = float(workflow[retrieval_index].get("step", retrieval_index + 1)) if retrieval_index < len(workflow) else 0.0
+            workflow.insert(
+                retrieval_index + 1,
+                {"step": previous_step + 0.5, "agent": "SearchAgent", "condition": "coverage_score < 0.72"},
+            )
         for step in workflow:
             agent_name = str(step.get("agent", "")).strip()
             if not agent_name:
@@ -220,6 +246,20 @@ class PlanningOrchestrator:
                 break
 
     def _should_execute_step(self, step: dict[str, Any], state: dict[str, Any]) -> bool:
+        # A comparison requires evidence for every company named in the query.
+        # Overall retrieval coverage can be high when it only found documents
+        # for one company (for example Tesla but not Google), so do not let it
+        # suppress the external search step in that case.
+        if str(step.get("agent", "")).strip() == "SearchAgent":
+            missing_entities = missing_query_entities(
+                state["cleaned_query"],
+                state.get("context_docs", []),
+                state.get("metadata", {}),
+            )
+            if missing_entities:
+                state["metadata"]["missing_query_entities"] = sorted(missing_entities)
+                return True
+
         condition = str(step.get("condition", "")).strip()
         if not condition:
             return True
@@ -292,6 +332,35 @@ class PlanningOrchestrator:
         # Sync to shared memory
         shared_memory: ShortTermMemory = state["shared_memory"]
         shared_memory.set_retrieval_docs(state["context_docs"])
+
+        # ── Semantic Memory: inject cached facts (read path) ────────────
+        if is_semantic_memory_enabled():
+            try:
+                metadata = state.get("metadata", {})
+                project_id = metadata.get("project_id")
+                conversation_id = metadata.get("conversation_id")
+                if project_id:
+                    reader = _get_semantic_reader()
+                    semantic_facts = reader.recall(
+                        query=state["cleaned_query"],
+                        project_id=project_id,
+                        conversation_id=conversation_id,
+                    )
+                    if semantic_facts:
+                        merged = self._deduplicate_documents(
+                            state["context_docs"] + semantic_facts
+                        )
+                        state["context_docs"] = merged
+                        shared_memory.set_retrieval_docs(merged)
+                        state["workflow_steps"].append(
+                            f"semantic_memory_injected:{len(semantic_facts)}_facts"
+                        )
+                        self._emit_progress(
+                            "semantic_memory",
+                            f"Injected {len(semantic_facts)} cached facts from semantic memory",
+                        )
+            except Exception as _sem_exc:
+                state["errors"].append(f"semantic_memory_read_error: {_sem_exc}")
 
     def _run_search_agent(self, state: dict[str, Any]) -> None:
         if self._context_searcher is not None:
@@ -471,11 +540,27 @@ class PlanningOrchestrator:
 
     def _run_advisor_agent(self, state: dict[str, Any]) -> None:
         shared_memory: ShortTermMemory = state["shared_memory"]
+
+        # ── User Preference Memory: load for this user (read path) ────────
+        user_preferences: dict[str, Any] = {}
+        if is_preference_memory_enabled():
+            try:
+                user_id = state.get("metadata", {}).get("user_id")
+                if user_id:
+                    user_preferences = _get_pref_reader().load(user_id)
+                    if user_preferences:
+                        state["workflow_steps"].append(
+                            f"preference_memory_loaded:{len(user_preferences)}_prefs"
+                        )
+            except Exception as _pref_exc:
+                state["errors"].append(f"preference_memory_read_error: {_pref_exc}")
+
         result = self._run_deep_advice(
             state["cleaned_query"],
             state.get("context_docs", []),
             state.get("metadata", {}),
             shared_memory,
+            user_preferences=user_preferences,
         )
         state["tool_calls"].extend(result["tool_calls"])
         state["tool_results"].extend(result["tool_results"])
@@ -525,6 +610,7 @@ class PlanningOrchestrator:
         context_docs: list[dict[str, Any]],
         metadata: dict[str, Any],
         shared_memory: ShortTermMemory,
+        user_preferences: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run the full deep-advice pipeline with a revision loop.
 
@@ -558,9 +644,35 @@ class PlanningOrchestrator:
         critic_cls = self._load_class("ai_integration.agent3_critic.critic", "CriticAgent")
         evaluator_cls = self._load_class("ai_integration.agent4_evaluator.evaluator", "EvaluatorAgent")
 
+        # ── Pre-Search: bổ sung context trước khi gọi Advisor ─────────────
+        # Nếu coverage hiện tại dưới threshold, chủ động search trước để Advisor
+        # (hoặc fallback AnswerAgent) có đủ tài liệu NVIDIA/công ty được hỏi.
+        top_k = int(self.config.get("top_k", 5))
+        retrieval_threshold = float(self.config.get("retrieval_threshold", 0.25))
+        current_coverage = min(1.0, len(context_docs) / max(top_k, 1))
+        if current_coverage < retrieval_threshold or not context_docs:
+            self._emit_progress("pre_search", "Coverage thấp – đang tìm kiếm thêm context...")
+            pre_search_docs = self._search_for_context(query)
+            if pre_search_docs:
+                context_docs = self._deduplicate_documents(context_docs + pre_search_docs)
+                shared_memory.set_retrieval_docs(context_docs)
+                workflow_steps.append(f"pre_searched:{len(pre_search_docs)}_docs")
+                self._emit_progress(
+                    "pre_search_done",
+                    f"Pre-search: thêm {len(pre_search_docs)} docs (total {len(context_docs)})",
+                )
+                tool_calls.append({"tool": "SearchAgent", "reason": "pre_search_low_coverage"})
+                tool_results.append({
+                    "tool": "SearchAgent",
+                    "status": "completed",
+                    "reason": "pre_search_low_coverage",
+                    "added_docs": len(pre_search_docs),
+                })
+
         if advisor_cls is None:
-            final_output = self._deep_advice_fallback(query, context_docs)
             errors.append("advisor_agent_unavailable")
+            # Graceful: dùng AnswerAgent để tận dụng context đã thu thập
+            final_output = self._graceful_advisor_fallback(query, context_docs, errors)
             return {
                 "workflow_steps": workflow_steps,
                 "tool_calls": tool_calls,
@@ -569,12 +681,16 @@ class PlanningOrchestrator:
                 "artifacts": artifacts,
                 "advisor_report": None,
                 "final_output": final_output,
+                "context_docs": context_docs,
             }
 
         # ── Advisor v1 ──────────────────────────────────────────────────
         try:
             advisor = self._build_advisor_agent(advisor_cls)
-            advisor_report = advisor.run(query, context_docs)
+            advisor_report = advisor.run(
+                query, context_docs,
+                user_preferences=user_preferences or {},
+            )
             context_docs = self._deduplicate_documents(
                 getattr(advisor, "current_context_docs", context_docs),
             )
@@ -601,7 +717,10 @@ class PlanningOrchestrator:
             shared_memory.set_advisor_report(advisor_report, version_label="v1")
         except Exception as exc:
             errors.append(f"advisor_agent_error: {exc}")
-            final_output = self._deep_advice_fallback(query, context_docs)
+            logger.error("AdvisorAgent.run() failed: %s", exc, exc_info=True)
+            # Graceful: dùng AnswerAgent với context đã thu thập thay vì trả về
+            # boilerplate text không có giá trị cho người dùng.
+            final_output = self._graceful_advisor_fallback(query, context_docs, errors)
             return {
                 "workflow_steps": workflow_steps,
                 "tool_calls": tool_calls,
@@ -610,6 +729,7 @@ class PlanningOrchestrator:
                 "artifacts": artifacts,
                 "advisor_report": advisor_report,
                 "final_output": final_output,
+                "context_docs": context_docs,
             }
 
         # ── Revision loop: Critic → Advisor revision → Evaluator ────────
@@ -768,6 +888,48 @@ class PlanningOrchestrator:
                 f"revision_limit_reached:max_loops={max_loops}",
             )
 
+        # ── Semantic Memory: persist extracted facts (write path) ────────
+        if advisor_report and is_semantic_memory_enabled():
+            try:
+                project_id = metadata.get("project_id")
+                conversation_id = metadata.get("conversation_id")
+                if project_id:
+                    writer = _get_semantic_writer()
+                    saved_facts = writer.extract_and_save(
+                        final_report=advisor_report,
+                        query=query,
+                        project_id=project_id,
+                        conversation_id=conversation_id,
+                        context_docs=context_docs,
+                    )
+                    if saved_facts:
+                        workflow_steps.append(
+                            f"semantic_facts_persisted:{len(saved_facts)}_facts"
+                        )
+                        self._emit_progress(
+                            "semantic_memory_write",
+                            f"Persisted {len(saved_facts)} facts to semantic memory",
+                        )
+            except Exception as _sem_exc:
+                errors.append(f"semantic_memory_write_error: {_sem_exc}")
+
+        # ── Preference Memory: detect & persist user preferences (write path) ──
+        if advisor_report and is_preference_memory_enabled():
+            try:
+                user_id = metadata.get("user_id")
+                if user_id:
+                    detected = _get_pref_writer().detect_and_save(
+                        query=query,
+                        report=advisor_report,
+                        user_id=user_id,
+                    )
+                    if detected:
+                        workflow_steps.append(
+                            f"preference_memory_updated:{len(detected)}_prefs"
+                        )
+            except Exception as _pref_exc:
+                errors.append(f"preference_memory_write_error: {_pref_exc}")
+
         return {
             "workflow_steps": workflow_steps,
             "tool_calls": tool_calls,
@@ -817,7 +979,7 @@ class PlanningOrchestrator:
                 {
                     "documents": current_context_docs,
                     "top_k": self.config.get("top_k", 5),
-                    "retrieval_threshold": self.config.get("retrieval_threshold", 0.25),
+                    "retrieval_threshold": self.config.get("retrieval_threshold", 0.45),
                 },
             )
             retrieved_docs.extend(result.get("context_docs", []))
@@ -840,7 +1002,7 @@ class PlanningOrchestrator:
                 focused_search_query = f"{query}\n{search_query}"
                 search_docs.extend(self._search_for_context(focused_search_query))
 
-        merged_docs = filter_documents_for_query_entity(query, self._deduplicate_documents(retrieved_docs + search_docs))
+        merged_docs = filter_documents_for_query_entity(query, self._deduplicate_documents(retrieved_docs + search_docs))[:top_k]
         coverage_score = max(coverage_score, min(1.0, len(merged_docs) / max(top_k, 1)))
 
         return {
@@ -868,6 +1030,26 @@ class PlanningOrchestrator:
                     issues.append(issue_text)
         return issues
 
+    def _graceful_advisor_fallback(
+        self,
+        query: str,
+        context_docs: list[dict[str, Any]],
+        errors: list[str],
+    ) -> str:
+        """Khi AdvisorAgent không khả dụng, dùng AnswerAgent để tạo câu trả lời
+        từ context đã thu thập. Chỉ khi AnswerAgent cũng fail thì mới dùng
+        _deep_advice_fallback (plain text) làm phương án cuối cùng."""
+        self._emit_progress("graceful_fallback", "AdvisorAgent không khả dụng – dùng AnswerAgent để trả lời...")
+        try:
+            agent = self._build_answer_agent()
+            result = agent.run(query, context_docs, {})
+            if result and str(result).strip():
+                return result
+        except Exception as exc:
+            errors.append(f"graceful_fallback_answer_agent_error: {exc}")
+            logger.warning("AnswerAgent graceful fallback also failed: %s", exc)
+        return self._deep_advice_fallback(query, context_docs)
+
     def _deep_advice_fallback(self, query: str, context_docs: list[dict[str, Any]]) -> str:
         lines = [
             "## Planner Decision",
@@ -888,7 +1070,7 @@ class PlanningOrchestrator:
         from ai_integration.agent5_searcher.searching_agent import SearchingAgent
         return SearchingAgent(
             coverage_threshold=float(self.config.get("search_coverage_threshold", 0.4)),
-            max_iterations=int(self.config.get("search_max_iterations", 1)),
+            max_iterations=int(self.config.get("search_max_iterations", 5)),
             top_k=int(self.config.get("search_top_k", 10)),
         )
     def _build_retrieval_agent(self) -> RetrievalAgent:
@@ -939,8 +1121,9 @@ class PlanningOrchestrator:
                 if not agent:
                     continue
 
-                # If the route is 'qa', we only allow RetrievalAgent and AnswerAgent
-                if normalized_route == "qa" and agent not in {"RetrievalAgent", "AnswerAgent"}:
+                # Finance Q&A may need external evidence, so SearchAgent is
+                # valid between local retrieval and answer generation.
+                if normalized_route == "qa" and agent not in {"RetrievalAgent", "SearchAgent", "AnswerAgent"}:
                     continue
 
                 normalized_step: dict[str, Any] = {
@@ -1001,7 +1184,8 @@ class PlanningOrchestrator:
                 "required_information": ["relevant filings or market context", "supporting evidence for the answer"],
                 "workflow": [
                     {"step": 1, "agent": "RetrievalAgent"},
-                    {"step": 2, "agent": "AnswerAgent"},
+                    {"step": 2, "agent": "SearchAgent", "condition": "coverage_score < 0.72"},
+                    {"step": 3, "agent": "AnswerAgent"},
                 ],
             }
         return {
@@ -1014,7 +1198,7 @@ class PlanningOrchestrator:
             ],
             "workflow": [
                 {"step": 1, "agent": "RetrievalAgent"},
-                {"step": 2, "agent": "SearchAgent", "condition": "coverage_score < 0.9"},
+                {"step": 2, "agent": "SearchAgent", "condition": "coverage_score < 0.72"},
                 {"step": 3, "agent": "AdvisorAgent"},
                 {"step": 4, "agent": "CriticAgent"},
                 {"step": 5, "agent": "EvaluatorAgent"},
@@ -1025,7 +1209,13 @@ class PlanningOrchestrator:
         try:
             module = importlib.import_module(module_name)
             return getattr(module, class_name)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Failed to load %s.%s – agent will be skipped. Reason: %s",
+                module_name,
+                class_name,
+                exc,
+            )
             return None
 
     def _load_config(self) -> dict[str, Any]:

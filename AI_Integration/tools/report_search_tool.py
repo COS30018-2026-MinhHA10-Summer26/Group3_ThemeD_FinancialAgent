@@ -48,7 +48,10 @@ def report_search_tool(
             params={
                 "q": f"{query} filetype:pdf",
                 "api_key": SERP_API_KEY,
-                "num": max_results,
+                # Request several candidates because some report hosts reject
+                # automation or have broken TLS. Only ``max_results`` usable
+                # reports are returned below.
+                "num": max(max_results * 5, 5),
             },
             timeout=30,
         )
@@ -60,7 +63,13 @@ def report_search_tool(
 
     synthetic_results = []
     sources = []
-    for index, result in enumerate(results.get("organic_results", []) or [], start=1):
+    # Ask SerpAPI for fallback candidates. A result can be unavailable because
+    # its host blocks bots, has an invalid TLS certificate, or is not a PDF.
+    # ``max_results`` remains the maximum number of usable reports returned.
+    candidate_results = results.get("organic_results", []) or []
+    for index, result in enumerate(candidate_results, start=1):
+        if len(sources) >= max_results:
+            break
         url = result.get("link")
         if not url:
             continue
@@ -75,6 +84,10 @@ def report_search_tool(
                 "Sec-Fetch-Mode": "navigate",
                 "Sec-Fetch-Site": "cross-site",
             }
+            # Keep certificate verification enabled. Downloading a financial
+            # report through an unverified HTTPS connection lets a network
+            # attacker substitute its contents. Invalid-certificate sources
+            # are skipped and the next search result is tried instead.
             response = requests.get(url, headers=headers, timeout=60)
             response.raise_for_status()
             content_type = response.headers.get("content-type", "")
