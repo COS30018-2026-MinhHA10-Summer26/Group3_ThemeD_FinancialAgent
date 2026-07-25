@@ -58,6 +58,7 @@ def run_multi_agent_chat(
         "project_id": str(project_id),
         "conversation_id": str(conversation_id),
         "user_id": str(user_id) if user_id is not None else None,
+        "original_query": query,
         "contextual_query": contextual_query,
         "conversation_turn_count": len(conversation_history),
         "has_uploaded_image": bool(image_base64),
@@ -68,12 +69,14 @@ def run_multi_agent_chat(
         progress_callback=progress_callback,
     )
     state = orchestrator.run(
-        query,
+        contextual_query,
         memory={"documents": context_docs, "top_k": 2, "metadata": metadata},
     )
     return {
         "answer": str(state.get("final_output", "")),
         "route": state.get("route"),
+        "original_query": query,
+        "contextual_query": contextual_query,
         "query_variations": query_variations,
         "sources": sources,
         "agent_run_log": _agent_run_log(state),

@@ -259,7 +259,11 @@ class AdvisorAgent:
 
             elif name == "figure_generation_tool":
                 res = figure_generation_tool(**arguments)
-                return json.dumps(res, indent=2, ensure_ascii=False)
+                # Return the ready-to-embed Markdown string directly.
+                # Previously returning the full JSON dict required the LLM to
+                # extract the "markdown" field, which caused it to occasionally
+                # drop the URL and produce a broken image tag.
+                return res["markdown"]
 
             else:
                 return f"Error: Tool '{name}' is not recognized."

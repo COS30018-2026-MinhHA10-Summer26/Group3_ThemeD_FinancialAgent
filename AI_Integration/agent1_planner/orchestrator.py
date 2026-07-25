@@ -120,6 +120,7 @@ class PlanningOrchestrator:
         metadata = dict(memory.get("metadata", {}))
 
         cleaned_query = query.strip()
+        original_query = metadata.get("original_query", cleaned_query)
         decision = self.classify_query(cleaned_query)
         workflow_steps.append(f"classified:{decision['route']}")
         self._emit_progress("classifying", f"Classifying: {decision['route']}")
@@ -139,6 +140,7 @@ class PlanningOrchestrator:
 
         state: dict[str, Any] = {
             "query": query,
+            "original_query": original_query,
             "cleaned_query": cleaned_query,
             "route": route,
             "classification_reason": decision["reason"],
