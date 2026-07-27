@@ -84,3 +84,5 @@ frontend/node_modules/
 
 # Ensure the local `lib/` folder is tracked (do not ignore)
 !lib/
+
+*.pdf
