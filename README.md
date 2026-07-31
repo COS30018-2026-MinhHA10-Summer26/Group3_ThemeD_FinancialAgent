@@ -46,7 +46,7 @@ Quick, reliable steps to run the project on your machine for development.
 Prerequisites
 - Git
 - Node.js 18+ and npm (or pnpm)
-- Python 3.11 or 3.12
+- Python 3.12
 - Optional: Docker / Docker Compose (for containerized run)
 
 1) Backend — Python (recommended for development)
@@ -76,8 +76,8 @@ cp .env.example .env 2>/dev/null || true
 - Run the API server (from the `backend` folder):
 
 ```bash
-cd api
-python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+cd backend
+python -m uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 The backend will be reachable at http://localhost:8000 and OpenAPI docs at http://localhost:8000/docs.
