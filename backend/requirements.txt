@@ -77,6 +77,4 @@ python-dateutil==2.9.0.post0
 PyYAML==6.0.3
 
 pdfplumber
-fitz
-tools
-pymupdf
+pymupdf==1.28.0

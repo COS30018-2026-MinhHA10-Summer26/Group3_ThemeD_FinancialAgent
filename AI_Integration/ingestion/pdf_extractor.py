@@ -2,12 +2,17 @@ import re
 from io import BytesIO
 import pdfplumber
 from pypdf import PdfReader
-import fitz
+
+try:
+    import pymupdf as fitz
+except ImportError:  # pragma: no cover - fallback for older environments
+    import fitz
 
 # Search results can include malformed PDFs. Their native MuPDF diagnostics are
 # noisy in the chat server log; callers receive the normal Python exception
 # instead and can skip just that result.
-fitz.TOOLS.mupdf_display_errors(False)
+if hasattr(fitz, "TOOLS"):
+    fitz.TOOLS.mupdf_display_errors(False)
 
 def _build_header_from_multirow(data):
     """
