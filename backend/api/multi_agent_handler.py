@@ -48,7 +48,7 @@ def run_multi_agent_chat(
     context_docs, query_variations, sources = retrieve_context_docs(
         project_id,
         contextual_query,
-        max_results=2,
+        max_results=5,
         extra_chunks=pdf_chunks,
     )
     if progress_callback:
@@ -70,7 +70,7 @@ def run_multi_agent_chat(
     )
     state = orchestrator.run(
         contextual_query,
-        memory={"documents": context_docs, "top_k": 2, "metadata": metadata},
+        memory={"documents": context_docs, "top_k": 5, "metadata": metadata},
     )
     return {
         "answer": str(state.get("final_output", "")),

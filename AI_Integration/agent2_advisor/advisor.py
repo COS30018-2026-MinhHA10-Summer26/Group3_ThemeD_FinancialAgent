@@ -23,7 +23,7 @@ load_dotenv(dotenv_path=str(PROJECT_ROOT / ".env"))
 load_dotenv(dotenv_path=str(ENV_PATH))
 
 ContextProvider = Callable[[str, List[Dict[str, Any]], Dict[str, Any]], Dict[str, Any]]
-MAX_CONTEXT_DOCUMENTS = 2
+MAX_CONTEXT_DOCUMENTS = 5
 MAX_DOC_CHARS = 2500
 
 

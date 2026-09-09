@@ -1073,7 +1073,7 @@ class PlanningOrchestrator:
         return SearchingAgent(
             coverage_threshold=float(self.config.get("search_coverage_threshold", 0.4)),
             max_iterations=int(self.config.get("search_max_iterations", 5)),
-            top_k=int(self.config.get("search_top_k", 10)),
+            top_k=int(self.config.get("search_top_k", 5)),
         )
     def _build_retrieval_agent(self) -> RetrievalAgent:
         return RetrievalAgent(self.config, DEFAULT_RAW_DIR)
@@ -1266,11 +1266,11 @@ class PlanningOrchestrator:
         try:
             reranker_module = importlib.import_module("ai_integration.agent5_searcher.search_reranker")
             rerank_search = reranker_module.rerank_search_results
-            top_k = int(self.config.get("top_k", 2))
+            top_k = int(self.config.get("top_k", 5))
             return rerank_search(query, filtered_docs, top_k=top_k)
         except Exception as e:
             print(f"Reranking failed in _search_for_context: {e}")
-            return filtered_docs[:2]
+            return filtered_docs[:5]
 
     def _deduplicate_documents(self, documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen: set[tuple[str, str]] = set()

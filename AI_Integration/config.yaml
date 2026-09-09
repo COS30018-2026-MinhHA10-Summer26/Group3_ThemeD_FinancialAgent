@@ -15,14 +15,14 @@ revision:
   search_on_missing: true
 
 semantic_memory:
-  enabled: true
+  enabled: false
   recall_top_k: 5
   similarity_threshold: 0.75
   max_facts_to_extract: 10
   extraction_model: "gpt-4o-mini"
 
 preference_memory:
-  enabled: true
+  enabled: false
   detection_model: "gpt-4o-mini"
   allowed_frameworks:
     - "SWOT"
