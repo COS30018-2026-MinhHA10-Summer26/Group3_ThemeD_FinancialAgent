@@ -4,11 +4,13 @@ from __future__ import annotations
 USER_QUERY = "How did supply chain challenges impact Tesla's production in 2022?"
 
 ADVISOR_REPORT_V1 = """
-# Impact of Supply Chain Challenges on Tesla's Production in 2022
+# Tesla's Production Impact from Supply Chain Challenges in 2022
 
-In 2022, Tesla faced significant supply chain challenges that impacted its production capabilities. The company highlighted these issues in its annual report, noting that various factors, including the ongoing effects of the COVID-19 pandemic, contributed to constraints in its supply chain. 
+In 2022, Tesla faced significant supply chain challenges that impacted its production capabilities. While the available documents do not provide specific production numbers or timelines, they highlight the broader context of these challenges.
 
-While specific production metrics for 2022 are not detailed in the available documents, it is clear that these supply chain constraints affected Tesla's ability to meet production targets. The company acknowledged that disruptions in the supply chain could lead to delays in production and delivery schedules, which are critical for maintaining customer satisfaction and meeting market demand.
+The company acknowledged that supply chain constraints, including those stemming from the COVID-19 pandemic, could affect its operations and production capacity. These constraints may have influenced Tesla's ability to meet demand for its vehicles, particularly as it continued to ramp up production of its various models, including the Model 3, Model Y, Model S, Model X, and the newly introduced Tesla Semi.
 
-To provide a more comprehensive analysis, specific production figures and detailed descriptions of the challenges encountered would be necessary. Unfortunately, these details are not present in the current document context. For further insights, it may be beneficial to consult Tesla's quarterly earnings reports or their investor relations page, which may contain more specific information regarding production performance and the impact of supply chain issues during that year.
+Despite these challenges, Tesla has been proactive in addressing supply chain issues by leveraging its technological advancements in battery and powertrain manufacturing. The company has developed proprietary battery technologies aimed at increasing supply and reducing costs, which may help mitigate some of the impacts of supply chain disruptions.
+
+For a more comprehensive analysis, specific production figures and timelines would be beneficial. If you have access to additional documents or sources that might contain this information, please provide them, and I can assist you further.
 """

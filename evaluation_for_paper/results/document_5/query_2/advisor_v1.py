@@ -4,9 +4,9 @@ from __future__ import annotations
 USER_QUERY = "How many vehicles did Tesla deliver in 2022 and how did that compare to 2021?"
 
 ADVISOR_REPORT_V1 = """
-# Tesla Vehicle Deliveries Report
+# Tesla Vehicle Deliveries in 2022 vs. 2021
 
-The specific vehicle delivery figures for Tesla in 2022 and 2021 were not found in the available documents. Unfortunately, I cannot provide the exact numbers for these years without the source filing.
+⚠️ The specific number of vehicles delivered by Tesla in 2022 and 2021 was not found in the available documents. This figure cannot be confirmed without the source filing.
 
-To obtain accurate and up-to-date information regarding Tesla's vehicle deliveries, I recommend checking Tesla's official annual report or press releases, which typically contain this information. These sources are reliable for understanding Tesla's performance in terms of vehicle deliveries over the specified years.
+To provide a comprehensive analysis, I recommend checking Tesla's official annual report or investor relations website for the specific delivery numbers for both years. If you have access to additional documents or data, please share them, and I can assist further.
 """

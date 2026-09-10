@@ -6,10 +6,36 @@ USER_QUERY = "What were Tesla's total revenues and net income for fiscal year 20
 ADVISOR_REPORT_V1 = """
 # Tesla Financial Overview for Fiscal Year 2022
 
-Tesla's total revenues and net income figures for fiscal year 2022 are not explicitly stated in the provided documents. However, you can find this information in the following sections of the Form 10-K for the year ended December 31, 2022:
+For the fiscal year 2022, Tesla reported the following financial figures derived from the NASDAQ TSLA 2022 Annual Report:
 
-- **Management's Discussion and Analysis of Financial Condition and Results of Operations**: This section typically provides insights into the company's financial performance, including revenues and net income.
-- **Financial Statements**: Detailed financial metrics, including total revenues and net income, are usually included in the financial statements section.
+- **Total Revenues**: $81.46 billion
+- **Net Income**: $12.56 billion
 
-To access the complete Form 10-K or other financial reports, I recommend visiting Tesla's official website or the SEC's EDGAR database, where you can search for Tesla's filings. This will allow you to find the relevant figures and gain a comprehensive understanding of Tesla's financial performance for 2022.
+These figures represent significant growth compared to the previous year, with total revenues increasing by $27.64 billion and net income increasing by $7.04 billion.
+
+## Financial Health
+Tesla's strong revenue growth and net income indicate a robust financial position. The company continues to ramp up production and expand its operations, which is essential for sustaining this growth trajectory.
+
+## Future Outlook
+Looking ahead, Tesla aims to enhance its production capacity and delivery capabilities while focusing on improving battery technologies and expanding its product offerings. This strategic direction positions Tesla well to capitalize on the growing demand for electric vehicles and sustainable energy solutions.
+
+## Risks and Limitations
+Despite the positive outlook, Tesla faces several risks, including supply chain disruptions, fluctuating raw material costs, and increasing competition in the electric vehicle market. These factors could impact future profitability and operational efficiency.
+
+## Actionable Advice
+Investors should monitor Tesla's production metrics and market conditions closely. Additionally, keeping an eye on the company's ability to manage costs and maintain its competitive edge will be crucial for assessing its long-term viability.
+
+## Visualization of Financial Figures
+To enhance clarity, the following table summarizes Tesla's financial performance for 2022:
+
+| Metric            | Amount (in billions) |
+|-------------------|----------------------|
+| Total Revenues    | $81.46               |
+| Net Income        | $12.56               |
+
+![Tesla Financial Overview](https://example.com/tesla_financial_overview.png) <!-- Placeholder for actual image link -->
+
+*Source: NASDAQ TSLA 2022 Annual Report* 
+
+If additional information is required, such as detailed financial ratios or segment performance, please let me know.
 """

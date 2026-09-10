@@ -6,21 +6,26 @@ USER_QUERY = "How did Tesla's energy generation and storage segment perform in 2
 ADVISOR_REPORT_V1 = """
 # Tesla's Energy Generation and Storage Segment Performance in 2022
 
-Tesla's energy generation and storage segment performance metrics for 2022 were not found in the available documents. Specific details such as revenue, growth rates, and any significant developments or challenges faced during the year are necessary for a comprehensive analysis, but these figures are currently unavailable.
+Tesla's energy generation and storage segment is a crucial part of its mission to accelerate the world’s transition to sustainable energy. However, specific financial performance metrics such as revenue, net income, and market share for this segment in 2022 were not found in the available documents. This absence of data limits our ability to provide a comprehensive analysis of the segment's performance.
 
-To provide a more thorough evaluation, it would be beneficial to access additional documents or data that may contain this information. Potential sources could include Tesla's detailed financial reports, investor presentations, or earnings call transcripts.
+### Key Insights from Available Information
+
+1. **Product Offerings**: Tesla markets and sells solar and energy storage products to a variety of customers, including residential, commercial, industrial, and utilities. The company emphasizes simplicity and accessibility to encourage the adoption of clean energy.
+
+2. **Sales Channels**: The energy products are sold through multiple channels, including Tesla's website, stores, galleries, and a network of channel partners. This diversified approach aims to reduce customer acquisition costs.
+
+3. **Service and Warranties**: Tesla provides service and repairs for its energy products, including warranties and performance guarantees. These warranties cover workmanship and defects, which can enhance customer trust and satisfaction.
 
 ### Financial Health and Future Outlook
-While specific financial figures are missing, it is important to consider the overall market trends in renewable energy and storage solutions, which are expected to grow significantly in the coming years. Tesla's continued investment in this segment suggests a commitment to expanding its capabilities and market share.
+
+Due to the lack of specific financial metrics, we cannot assess the financial health or future outlook of Tesla's energy generation and storage segment accurately. Understanding the revenue growth, profitability, and market share would be essential to gauge the segment's performance and potential risks.
 
 ### Risks and Limitations
-The energy generation and storage market faces several risks, including regulatory changes, competition from other renewable energy providers, and supply chain constraints. These factors could impact Tesla's performance in this segment moving forward.
 
-### Additional Information Needed
-To provide a comprehensive analysis, the following information is required:
-- Tesla's energy generation and storage segment revenue for 2022
-- Growth rates for the energy generation and storage segment in 2022
-- Significant developments or challenges faced by the energy generation and storage segment in 2022
+- **Data Availability**: The absence of financial metrics limits our ability to provide a detailed analysis.
+- **Market Competition**: The energy generation and storage market is competitive, and Tesla must continue to innovate and reduce costs to maintain its market position.
 
-If you have access to further documentation or specific metrics, please share them for a more detailed analysis.
+### Conclusion
+
+For a more detailed analysis of Tesla's energy generation and storage segment performance in 2022, specific financial metrics are necessary. Unfortunately, these metrics are currently unavailable. If you have access to additional documents or reports that contain this information, please provide them for further insights.
 """

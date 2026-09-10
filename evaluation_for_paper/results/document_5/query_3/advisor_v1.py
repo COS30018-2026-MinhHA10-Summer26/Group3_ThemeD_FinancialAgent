@@ -4,15 +4,22 @@ from __future__ import annotations
 USER_QUERY = "What were the key financial ratios and margins for Tesla in 2022?"
 
 ADVISOR_REPORT_V1 = """
-# Key Financial Ratios and Margins for Tesla in 2022
+# Tesla 2022 Financial Ratios and Margins Report
 
-Unfortunately, the key financial ratios and margins for Tesla in 2022 were not found in the available documents. This information is essential for a comprehensive analysis but cannot be confirmed without access to Tesla's financial statements or specific data regarding their financial ratios and margins for that year.
+Unfortunately, key financial ratios and margins for Tesla in 2022 were not found in the available documents. The specific financial metrics necessary for calculating these ratios, such as net income, total revenue, total assets, and total liabilities, are not included in the provided context.
 
-### Suggestions for Obtaining Missing Information
-To acquire the required financial ratios and margins, consider the following options:
-1. **Tesla's Official Financial Statements**: Review Tesla's 10-K filing for 2022, which typically includes detailed financial metrics.
-2. **Financial News Websites**: Websites like Yahoo Finance, Google Finance, or Bloomberg often provide summarized financial data, including key ratios.
-3. **Investment Research Platforms**: Platforms such as Morningstar or Seeking Alpha may offer in-depth analyses and financial metrics for Tesla.
+To provide a complete analysis, I would need access to Tesla's financial statements or reports that include these details. If you have access to such documents, please share them for further analysis.
 
-If you have any additional documents or sources that might contain this information, please share them, and I can assist further.
+### Actionable Insights
+- **Recommendation**: Review Tesla's official financial statements or the 10-K filing for 2022 to obtain the necessary metrics for a comprehensive financial analysis.
+- **Future Outlook**: Monitoring Tesla's performance in upcoming quarters will provide insights into its financial health and operational efficiency, which can be compared against industry benchmarks once the relevant data is available.
+
+### Missing Financial Metrics
+The following specific financial figures are needed to calculate key financial ratios and margins:
+- Net Income
+- Total Revenue
+- Total Assets
+- Total Liabilities
+
+If you can provide these figures or direct me to where they can be found, I can assist you further in analyzing Tesla's financial performance for 2022.
 """

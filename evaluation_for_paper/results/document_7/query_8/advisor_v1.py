@@ -6,13 +6,12 @@ USER_QUERY = "What does Tesla's 2024 annual report say about its Optimus robot a
 ADVISOR_REPORT_V1 = """
 # Tesla's 2024 Annual Report Insights on Optimus Robot and Future Technology Roadmap
 
-The available documents do not contain specific information regarding Tesla's Optimus robot or its future technology roadmap. Therefore, I cannot provide direct insights into these topics based on the current context.
+The available documents do not provide specific information regarding Tesla's Optimus robot or its future technology roadmap. Unfortunately, this information is not included in the current context of the 2024 annual report.
 
-However, I recommend checking the following sections of Tesla's 2024 annual report for potentially relevant insights:
+To obtain detailed insights about Tesla's Optimus robot and future technology initiatives, I recommend checking the following sources:
+- Tesla's official website and press releases.
+- The full text of Tesla's 2024 annual report, which may contain additional sections not included in the excerpts provided.
+- Upcoming earnings calls or investor presentations where management may discuss future technology plans.
 
-- **Item 1: Business** - This section often outlines the company's key initiatives and technological advancements, which may include information about the Optimus robot.
-- **Item 7: Management's Discussion and Analysis of Financial Condition and Results of Operations** - This section may provide insights into the company's strategic direction and future projects, including robotics and other technological innovations.
-- **Item 9: Other Information** - This section might include additional details or updates on ongoing projects and innovations.
-
-It is important to note that the lack of specific information on the Optimus robot and future technology roadmap may limit a comprehensive understanding of Tesla's strategic initiatives in these areas. For a thorough analysis, I suggest reviewing these sections directly in Tesla's 2024 annual report. If you have access to specific excerpts or additional documents, please share them for further analysis.
+These resources may offer the most accurate and comprehensive information regarding Tesla's advancements in robotics and technology.
 """

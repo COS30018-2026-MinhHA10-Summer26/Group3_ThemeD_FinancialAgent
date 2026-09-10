@@ -6,13 +6,13 @@ USER_QUERY = "What major capital investments did Tesla make in 2024?"
 ADVISOR_REPORT_V1 = """
 # Tesla's Major Capital Investments in 2024
 
-The available documents do not provide specific details regarding major capital investments made by Tesla in 2024. The relevant sections of the 10-K filing, particularly in the Management's Discussion and Analysis of Financial Condition and Results of Operations (Item 7) and the Financial Statements (Item 8), may contain insights into capital expenditures, but this information was not explicitly found in the reviewed documents.
+Unfortunately, specific details regarding Tesla's major capital investments in 2024 were not found in the available documents. The information on capital expenditures and specific investments is typically detailed in the following sections of the 10-K report:
 
-To obtain detailed information about Tesla's capital investments for 2024, I recommend checking the following:
+1. **Item 7 - Management's Discussion and Analysis of Financial Condition and Results of Operations**: This section usually discusses capital expenditures and investments made during the fiscal year.
+   
+2. **Item 8 - Financial Statements and Supplementary Data**: The cash flow statement in this section may provide insights into capital expenditures.
 
-1. **Management's Discussion and Analysis (Item 7)**: This section typically discusses financial performance, including capital expenditures.
-2. **Financial Statements (Item 8)**: The financial statements may provide insights into capital investments through cash flow statements or notes.
-3. **Press Releases**: Tesla often announces significant investments or projects through press releases, which can be found on their official website.
+3. **Item 1 - Business**: This section may outline strategic initiatives and investments that could indicate major capital expenditures.
 
-If you have access to the complete 10-K filing or other recent reports, reviewing these sections may yield the information you are looking for.
+Since the specific details and financial figures regarding capital investments in 2024 are not available in the current documents, I recommend checking these sections for a comprehensive understanding of Tesla's capital investments. If you have access to additional documents or can provide more context, I can assist further in analyzing Tesla's capital investments.
 """

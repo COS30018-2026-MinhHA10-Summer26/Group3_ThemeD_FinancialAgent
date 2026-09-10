@@ -334,6 +334,55 @@ def load_document_module(doc_index: int) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Context trimmer — prevents TPM overflow on large documents
+# ---------------------------------------------------------------------------
+
+def select_relevant_chunks(
+    query: str,
+    context_docs: List[Dict[str, Any]],
+    max_chunks: int = 20,
+) -> List[Dict[str, Any]]:
+    """
+    Return the top-N most query-relevant chunks using simple token overlap
+    scoring (no embeddings needed). Always keeps at least the first chunk
+    (cover page / summary) to anchor source metadata.
+
+    Using max_chunks=20 keeps the total prompt well under 200k TPM even for
+    the largest documents (TSLA 2022 has 458 chunks, each ~1-2k chars).
+    """
+    import re
+
+    def _tokens(text: str) -> set:
+        return set(re.findall(r"[a-z0-9]+", text.lower()))
+
+    query_tokens = _tokens(query)
+    if not query_tokens:
+        return context_docs[:max_chunks]
+
+    scored: List[tuple] = []
+    for i, doc in enumerate(context_docs):
+        text = str(doc.get("text", ""))
+        doc_tokens = _tokens(text)
+        overlap = len(query_tokens & doc_tokens)
+        scored.append((overlap, i, doc))
+
+    # Sort by overlap desc, break ties by original index asc
+    scored.sort(key=lambda x: (-x[0], x[1]))
+
+    top = [doc for _, _, doc in scored[:max_chunks]]
+
+    # Always include the very first chunk for source/cover metadata
+    first = context_docs[0]
+    if first not in top:
+        top = [first] + top[:max_chunks - 1]
+
+    # Re-sort by original position so chunks read in document order
+    original_order = {id(doc): i for i, doc in enumerate(context_docs)}
+    top.sort(key=lambda doc: original_order.get(id(doc), 0))
+
+    return top
+
+# ---------------------------------------------------------------------------
 # File writers  (doc_index + query_index used for docstrings only)
 # ---------------------------------------------------------------------------
 
@@ -452,6 +501,10 @@ def run_scenario(
 ) -> None:
     """Run all 4 stages for a single (document, query) scenario."""
 
+    # Trim context to top-20 relevant chunks to stay under TPM limits
+    context_docs = select_relevant_chunks(user_query, context_docs, max_chunks=20)
+    print(f"    Context trimmed to {len(context_docs)} relevant chunks")
+
     scenario_dir = (
         Path(project_root)
         / "evaluation_for_paper"
@@ -554,7 +607,7 @@ def main() -> None:
     completed = 0
     failed: List[str] = []
 
-    for doc_index in range(3, total_docs + 1):
+    for doc_index in range(7, total_docs + 1):
         try:
             doc_module = load_document_module(doc_index)
             user_queries: List[str] = doc_module.USER_QUERIES
@@ -610,3 +663,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
