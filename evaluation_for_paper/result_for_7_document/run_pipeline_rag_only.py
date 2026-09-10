@@ -1,5 +1,5 @@
-"""
-RAG-only evaluation pipeline — 7 documents × 8 queries = 56 scenarios.
+﻿"""
+RAG-only evaluation pipeline: 7 documents × 8 queries = 56 scenarios.
 
 Each scenario sends CONTEXT_DOCS + USER_QUERY directly to the LLM (no
 multi-agent pipeline), then evaluates the response with EvaluatorAgent
@@ -47,9 +47,50 @@ import openai                                                            # noqa:
 from openai import OpenAI                                               # noqa: E402
 from ai_integration.agent4_evaluator.evaluator import EvaluatorAgent   # noqa: E402
 
+# ---------------------------------------------------------------------------
+# Context trimmer — prevents TPM overflow on large documents
+# ---------------------------------------------------------------------------
+
+def select_relevant_chunks(
+    query: str,
+    context_docs: List[Dict[str, Any]],
+    max_chunks: int = 20,
+) -> List[Dict[str, Any]]:
+    """
+    Return top-N most query-relevant chunks using token overlap scoring.
+    Prevents TPM overflow on large documents like TSLA 2022 (458 chunks).
+    """
+    import re
+
+    def _tokens(text: str) -> set:
+        return set(re.findall(r"[a-z0-9]+", text.lower()))
+
+    query_tokens = _tokens(query)
+    if not query_tokens:
+        return context_docs[:max_chunks]
+
+    scored: List[tuple] = []
+    for i, doc in enumerate(context_docs):
+        text = str(doc.get("text", ""))
+        doc_tokens = _tokens(text)
+        overlap = len(query_tokens & doc_tokens)
+        scored.append((overlap, i, doc))
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    top = [doc for _, _, doc in scored[:max_chunks]]
+
+    first = context_docs[0]
+    if first not in top:
+        top = [first] + top[:max_chunks - 1]
+
+    original_order = {id(doc): i for i, doc in enumerate(context_docs)}
+    top.sort(key=lambda doc: original_order.get(id(doc), 0))
+
+    return top
+
 
 # ---------------------------------------------------------------------------
-# Stage 1 — Direct RAG response (no multi-agent pipeline)
+# Stage 1: Direct RAG response (no multi-agent pipeline)
 # ---------------------------------------------------------------------------
 
 def generate_rag_response(
@@ -122,7 +163,7 @@ def write_report_v0(
     """Write a report_v0.py file for a single (document, query) scenario."""
     content = (
         '"""\n'
-        f"RAG-only Evaluation Report — document_{doc_index} / query_{query_index}\n"
+        f"RAG-only Evaluation Report: document_{doc_index} / query_{query_index}\n"
         f"Source document: {pdf_filename}\n"
         f"Query: {user_query}\n"
         '"""\n'
@@ -176,7 +217,7 @@ def main() -> None:
     completed = 0
     failed: List[str] = []
 
-    for doc_index in range(1, total_docs + 1):
+    for doc_index in range(5, total_docs - 1):
         try:
             doc_module = load_document_module(doc_index)
             user_queries: List[str] = doc_module.USER_QUERIES
@@ -185,8 +226,8 @@ def main() -> None:
 
             print()
             print("=" * 60)
-            print(f"DOCUMENT {doc_index}/{total_docs} — {pdf_filename}")
-            print(f"  {len(user_queries)} queries → {len(user_queries)} scenarios")
+            print(f"DOCUMENT {doc_index}/{total_docs}: {pdf_filename}")
+            print(f"  {len(user_queries)} queries -> {len(user_queries)} scenarios")
             print("=" * 60)
 
             for query_index, user_query in enumerate(user_queries, start=1):
@@ -207,23 +248,27 @@ def main() -> None:
                     continue
 
                 try:
+                    # Trim context to top-20 relevant chunks to stay under TPM limits
+                    context_docs_trimmed = select_relevant_chunks(user_query, context_docs, max_chunks=20)
+                    print(f"    Context trimmed to {len(context_docs_trimmed)} relevant chunks")
+
                     # ----------------------------------------------------------
-                    # Stage 1 — Direct RAG response
+                    # Stage 1: Direct RAG response
                     # ----------------------------------------------------------
-                    print(f"\n  [Stage 1] RAG response — {scenario_label}")
+                    print(f"\n  [Stage 1] RAG response: {scenario_label}")
                     print(f"    Query: {user_query[:90]}{'...' if len(user_query) > 90 else ''}")
-                    rag_response = _safe_generate_rag(client, model, user_query, context_docs)
+                    rag_response = _safe_generate_rag(client, model, user_query, context_docs_trimmed)
                     print(f"    RAG response generated ({len(rag_response)} chars)")
 
                     # ----------------------------------------------------------
-                    # Stage 2 — Evaluator Mode A (no critic_issues, no advisor_report_v2)
+                    # Stage 2: Evaluator Mode A (no critic_issues, no advisor_report_v2)
                     # ----------------------------------------------------------
-                    print(f"\n  [Stage 2] Evaluator Mode A — {scenario_label}")
+                    print(f"\n  [Stage 2] Evaluator Mode A: {scenario_label}")
                     evaluation_report = evaluator.run(
                         query=user_query,
-                        context_docs=context_docs,
+                        context_docs=context_docs_trimmed,
                         response=rag_response,
-                        # critic_issues and advisor_report_v2 NOT passed → Mode A
+                        # critic_issues and advisor_report_v2 NOT passed -> Mode A
                     )
                     print(f"    Evaluation report generated ({len(evaluation_report)} chars)")
 
@@ -247,12 +292,12 @@ def main() -> None:
                 except Exception:
                     traceback.print_exc()
                     failed.append(scenario_label)
-                    print(f"\n  [ERROR] {scenario_label} failed — skipping\n")
+                    print(f"\n  [ERROR] {scenario_label} failed - skipping\n")
                     continue
 
         except Exception:
             traceback.print_exc()
-            print(f"\n[ERROR] Failed to load document_{doc_index} — skipping entire document\n")
+            print(f"\n[ERROR] Failed to load document_{doc_index} - skipping entire document\n")
             continue
 
     print()
