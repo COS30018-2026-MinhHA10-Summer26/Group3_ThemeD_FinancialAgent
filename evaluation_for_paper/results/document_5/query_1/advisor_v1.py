@@ -6,15 +6,10 @@ USER_QUERY = "What were Tesla's total revenues and net income for fiscal year 20
 ADVISOR_REPORT_V1 = """
 # Tesla Financial Overview for Fiscal Year 2022
 
-For the fiscal year 2022, Tesla's total revenues and net income were not explicitly found in the available documents. However, these figures are typically included in their annual report (Form 10-K) filed with the SEC.
+Tesla's total revenues and net income figures for fiscal year 2022 are not explicitly stated in the provided documents. However, you can find this information in the following sections of the Form 10-K for the year ended December 31, 2022:
 
-### Suggested Sources for Financial Figures:
-- **Tesla's Official Investor Relations Website**: This site often contains the latest financial reports and earnings releases.
-- **SEC Filings**: The SEC's EDGAR database allows you to search for Tesla's Form 10-K and other filings that include detailed financial information.
+- **Management's Discussion and Analysis of Financial Condition and Results of Operations**: This section typically provides insights into the company's financial performance, including revenues and net income.
+- **Financial Statements**: Detailed financial metrics, including total revenues and net income, are usually included in the financial statements section.
 
-### Financial Health and Outlook
-While specific figures are unavailable, Tesla has shown strong growth in previous years, driven by increasing vehicle deliveries and expansion into new markets. However, potential risks include supply chain disruptions, competition in the electric vehicle market, and regulatory changes.
-
-### Conclusion
-For the most accurate and up-to-date financial information, please refer to Tesla's official filings or their investor relations page. If you have any further questions or need assistance with specific financial metrics, feel free to ask!
+To access the complete Form 10-K or other financial reports, I recommend visiting Tesla's official website or the SEC's EDGAR database, where you can search for Tesla's filings. This will allow you to find the relevant figures and gain a comprehensive understanding of Tesla's financial performance for 2022.
 """
