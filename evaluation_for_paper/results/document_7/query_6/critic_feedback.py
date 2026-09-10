@@ -1,0 +1,24 @@
+"""Critic Agent Feedback — document_7 / query_6"""
+from __future__ import annotations
+
+USER_QUERY = "What major capital investments did Tesla make in 2024?"
+
+ADVISOR_REPORT_V1 = """
+# Tesla's Major Capital Investments in 2024
+
+The available documents do not provide specific details regarding major capital investments made by Tesla in 2024. The relevant sections of the 10-K filing, particularly in the Management's Discussion and Analysis of Financial Condition and Results of Operations (Item 7) and the Financial Statements (Item 8), may contain insights into capital expenditures, but this information was not explicitly found in the reviewed documents.
+
+To obtain detailed information about Tesla's capital investments for 2024, I recommend checking the following:
+
+1. **Management's Discussion and Analysis (Item 7)**: This section typically discusses financial performance, including capital expenditures.
+2. **Financial Statements (Item 8)**: The financial statements may provide insights into capital investments through cash flow statements or notes.
+3. **Press Releases**: Tesla often announces significant investments or projects through press releases, which can be found on their official website.
+
+If you have access to the complete 10-K filing or other recent reports, reviewing these sections may yield the information you are looking for.
+"""
+
+CRITIC_FEEDBACK = {
+    "passes": False,
+    "issues": ["See revision_instructions for the full critique output."],
+    "revision_instructions": "## Overall Verdict\nThe report lacks critical information regarding Tesla's major capital investments in 2024. It fails to provide specific details or insights into the company's capital expenditures, which are essential for understanding its financial health and strategic direction. The absence of risk analysis further diminishes the report's value for decision-making.\n\n## Major Logic Gaps\n- The report states that the documents do not provide specific details on capital investments but does not explore any potential implications of this lack of information.\n- It suggests checking other sections of the 10-K for insights but does not provide any specific findings or summaries from those sections, leaving the reader without actionable insights.\n\n## Unsupported or Weakly Supported Claims\n- The recommendation to check the Management's Discussion and Analysis (Item 7) and Financial Statements (Item 8) lacks context or evidence that these sections contain the needed information.\n- The report does not cite any specific figures or examples from the documents reviewed, making it difficult to assess the validity of the claims made.\n\n## Missing Investor Risks\n- The report does not address any risks associated with Tesla's capital investments, such as competition, supply chain issues, regulatory challenges, or execution risks. These are critical for investors to understand the potential downsides of Tesla's investment strategy.\n- The absence of a risk analysis leaves a significant gap in understanding the broader implications of Tesla's financial decisions.\n\n## Figure and Visualization Issues\n- There are no figures or visualizations included in the report, which could have helped illustrate Tesla's capital investment trends or financial performance. The lack of visual data makes it harder for readers to grasp the financial context.\n\n## Competitor Counterarguments\n- Competitors may argue that the lack of detailed capital investment information indicates a lack of transparency or strategic direction from Tesla, potentially undermining investor confidence.\n- The absence of risk discussion could be leveraged by competitors to highlight their own more robust risk management strategies.\n\n## Revision Priorities\n1. **Include Specific Capital Investment Details**: Provide concrete figures or examples of major capital investments made by Tesla in 2024.\n2. **Address Missing Risks**: Incorporate a thorough analysis of potential risks associated with Tesla's capital investments, including competition, supply chain, and regulatory risks.\n3. **Cite Relevant Sections**: Summarize key insights from the Management's Discussion and Analysis and Financial Statements sections of the 10-K to support claims made in the report.\n4. **Add Visual Data**: Consider including figures or charts that illustrate Tesla's capital investment trends or financial performance to enhance clarity and engagement.\n\n## Issues to Resolve\n- [ ] [Provide specific details on Tesla's major capital investments in 2024.]\n- [ ] [Incorporate a thorough analysis of potential risks associated with capital investments.]\n- [ ] [Summarize key insights from relevant sections of the 10-K to support claims.]\n- [ ] [Include visual data to illustrate investment trends or financial performance.]"
+}

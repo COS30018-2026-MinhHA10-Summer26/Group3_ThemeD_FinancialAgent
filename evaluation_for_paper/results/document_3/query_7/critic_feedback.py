@@ -1,0 +1,24 @@
+"""Critic Agent Feedback — document_3 / query_7"""
+from __future__ import annotations
+
+USER_QUERY = "What were the significant legal and regulatory risks Amazon faced in 2024?"
+
+ADVISOR_REPORT_V1 = """
+# Amazon's Legal and Regulatory Risks in 2024
+
+⚠️ The available documents do not provide specific details regarding significant legal and regulatory risks faced by Amazon in 2024. There are no mentions of legal challenges, regulatory compliance issues, or changes in legislation that could have impacted Amazon during this period.
+
+To obtain a comprehensive analysis of Amazon's legal and regulatory risks in 2024, I recommend checking the following sources:
+
+1. **SEC Filings**: Review Amazon's annual report (10-K) and quarterly reports (10-Q) filed with the Securities and Exchange Commission, which often detail legal proceedings and regulatory risks.
+2. **News Articles**: Look for news coverage from reputable financial news outlets that may have reported on any significant legal issues or regulatory changes affecting Amazon in 2024.
+3. **Industry Reports**: Consider industry analysis reports that focus on e-commerce and technology sectors, which may highlight regulatory trends and challenges faced by major players like Amazon.
+
+If you have access to additional documents or sources that might contain this information, please share them for further analysis.
+"""
+
+CRITIC_FEEDBACK = {
+    "passes": False,
+    "issues": ["See revision_instructions for the full critique output."],
+    "revision_instructions": "## Overall Verdict\nThe advisor report lacks sufficient detail regarding Amazon's legal and regulatory risks in 2024. It fails to address significant legal challenges, regulatory compliance issues, and changes in legislation that could have impacted Amazon during this period. The recommendations for further research are valid but do not provide immediate value to stakeholders seeking a comprehensive understanding of the risks.\n\n## Major Logic Gaps\n- The report states that there are no mentions of legal challenges or regulatory compliance issues in the provided documents, yet the context documents contain extensive information on ongoing legal proceedings and regulatory scrutiny faced by Amazon.\n- The conclusion that significant legal and regulatory risks are not present is misleading, as the context documents detail various legal challenges and investigations that could materially affect Amazon's operations.\n\n## Unsupported or Weakly Supported Claims\n- The assertion that \"the available documents do not provide specific details regarding significant legal and regulatory risks\" is unsupported, as the context documents explicitly outline various legal proceedings and regulatory risks.\n- The recommendation to check SEC filings and news articles is generic and does not leverage the specific information available in the context documents.\n\n## Missing Investor Risks\n- **Competition**: The report does not address the intense competition Amazon faces, which is highlighted in the context documents.\n- **Valuation Risks**: There is no mention of how ongoing legal issues could impact Amazon's valuation, despite context documents indicating potential financial liabilities.\n- **Supply Chain Risks**: The report overlooks risks related to supply chain disruptions, which are relevant given Amazon's extensive logistics operations.\n- **Margin Pressure**: The report fails to discuss how legal and regulatory challenges could lead to increased operational costs and margin pressure.\n- **Execution Risks**: There is no acknowledgment of the risks associated with executing new initiatives amidst ongoing legal scrutiny.\n\n## Figure and Visualization Issues\n- There are no figures or visualizations in the report that require auditing or critique.\n\n## Competitor Counterarguments\n- Competitors could argue that the report's lack of detail on legal and regulatory risks indicates a lack of thorough analysis, potentially undermining investor confidence.\n- The absence of discussion on competitive pressures and market dynamics could be seen as a strategic blind spot, making the report less credible.\n\n## Revision Priorities\n1. **Incorporate Specific Legal and Regulatory Risks**: Include detailed information from the context documents regarding ongoing legal proceedings and regulatory scrutiny.\n2. **Address Missing Risk Topics**: Discuss competition, valuation, supply chain, margin pressure, and execution risks explicitly.\n3. **Strengthen Recommendations**: Provide actionable insights based on the context documents rather than generic suggestions for further research.\n\n## Issues to Resolve\n- [ ] [Incorporate specific legal and regulatory risks from context documents.]\n- [ ] [Address missing risk topics: competition, valuation, supply chain, margin pressure, execution.]\n- [ ] [Strengthen recommendations with actionable insights based on available information.]"
+}
