@@ -20,7 +20,7 @@ Scenarios that already have a final_report.py are skipped automatically,
 so the script is safe to re-run after an interruption.
 
 Run from the workspace root:
-    python evaluation_for_paper/result_for_7_document/run_pipeline.py
+    python evaluation_for_paper/pipeline/run_pipeline.py
 """
 
 from __future__ import annotations

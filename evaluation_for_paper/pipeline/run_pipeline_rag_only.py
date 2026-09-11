@@ -8,7 +8,7 @@ in Mode A (RAG-only mode).
 Output: evaluation_for_paper/result_for_rag_only/document_{i}/query_{q}/report_v0.py
 
 Run from workspace root:
-    python evaluation_for_paper/result_for_7_document/run_pipeline_rag_only.py
+    python evaluation_for_paper/pipeline/run_pipeline_rag_only.py
 """
 
 from __future__ import annotations
